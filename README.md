@@ -4,10 +4,10 @@ The program watches for file changes in the project directory given and runs or 
 for every change made (notify.ALL). Works on Linux.
 
 Catchy name 😂.
-The program should help when using go's templating system in doing frontend work, personally it does.
+The program should help when using go's templating system in doing frontend work (why not automate this😭).
 Or whatever else you may find it useful for.
 
 It relies on "github.com/rjeczalik/notify" repo.
 
 Any comments, suggestions, PRs, or code reviews are welcome.
-Am learning lets learn together 
+Am learning lets learn together.
