@@ -29,7 +29,10 @@ func main() {
 		return
 	}
 	if *mainPath == "" {
-		filePath := lookForMain(*projectDir)
+		filePath, err := lookForMain(*projectDir)
+		if err != nil {
+			errLogger(err)
+		}
 		if filePath == "" {
 			errLogger(errors.New("main.go file was not found"))
 		}
@@ -66,23 +69,34 @@ func main() {
 
 // lookForMain takes a folder and looks for main.go file
 // if successful it returns mainFile, nil else it returns "", dir (if any) or nil
-func lookForMain(path string) (mainFile string) {
+func lookForMain(path string) (mainFile string, err error) {
 	folder, err := os.Open(path)
-	errLogger(err)
+	if err != nil {
+		return "", nil
+	}
 
 	files, err := folder.Readdirnames(0)
-	errLogger(err)
+	if err != nil {
+		return "", nil
+	}
 
 	for _, file := range files {
 		if file == "main.go" {
-			return path + "/" + file
+			return path + "/" + file, nil
 		}
 		thisFile, err := os.Open(path + "/" + file)
-		errLogger(err)
+		if err != nil {
+			return "", nil
+		}
 		thisFileInfo, err := thisFile.Stat()
-		errLogger(err)
+		if err != nil {
+			return "", nil
+		}
 		if thisFileInfo.IsDir() {
-			mainFile = lookForMain(path + "/" + file)
+			mainFile, err = lookForMain(path + "/" + file)
+			if err != nil {
+				return "", nil
+			}
 			if mainFile != "" {
 				return
 			}
