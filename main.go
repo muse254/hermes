@@ -65,6 +65,9 @@ func main() {
 	projectName := subs[len(subs)-1]
 
 	for {
+
+		// for each iteration are these data structures created?
+		// todo: move outside for loop?
 		wg := sync.WaitGroup{}
 
 		watch := make(chan notify.EventInfo, 1)
@@ -257,3 +260,8 @@ func errLogger(err error) {
 		log.Fatal(err)
 	}
 }
+
+// BUG
+// Changes should be aggregated. Every single change
+// creates spawns rerun that leaks resources save for
+// the initial for the first change rerun
