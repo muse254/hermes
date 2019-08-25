@@ -17,10 +17,14 @@ It relies on "github.com/rjeczalik/notify" repo.
 hermes being a commandline program uses flags:
     
     -project: to provide the project directory  (string flag)
-    For execution flags which are bool flags only one can be used
+    
+    For execution flags which are bool flags only one can be used:    
     -gorun: to state you want a 'go run' execution  
     -gobuild: to state that you want a 'go build && ./projectName' execution
     -gotest: to state you want a 'go test' execution
+    
+    For some reason if your func main is in another file other than main.go:
+    -main: to state where the path to the .go file that contains main  (string flag)
 
 Note that this error:
 
