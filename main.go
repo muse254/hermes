@@ -14,6 +14,9 @@ import (
 
 type process struct {
 	command *exec.Cmd
+
+	// I have not come round to using this
+	// todo: check for race conditions
 	mutex   sync.Mutex
 }
 
@@ -42,7 +45,7 @@ func main() {
 		*mainPath = filePath
 	}
 
-	// use gorun as default value
+	// use gorun = true as default value
 	if *gorun == false && *gotest == false && *gobuild == false {
 		*gorun = true
 	}
@@ -50,22 +53,18 @@ func main() {
 	subs := strings.SplitN(*projectDir, "/", -1)
 	projectName := subs[len(subs)-1]
 
-	wg := sync.WaitGroup{}
-	listen := make(chan notify.EventInfo, 1)
-	defer close(listen)
-	interrupt := make(chan os.Signal, 1)
-	defer close(interrupt)
-	wait := make(chan error, 1)
-	defer close(wait)
-
 	for {
-		// Initial run
-		// if terminate, wait for changes to do rerun
-		// if second terminate, close hermes
+		wg := sync.WaitGroup{}
+		watch := make(chan notify.EventInfo, 1)
+		interrupt := make(chan os.Signal, 1)
+		wait := make(chan error, 1)
+		closeWait := make(chan bool, 1)
+
 		if *gorun {
 
-			errLogger(notify.Watch(*projectDir, listen, notify.All))
+			// a bit quirky 😞
 			signal.Notify(interrupt, os.Interrupt)
+			errLogger(notify.Watch(*projectDir, watch, notify.All))
 			pre := cmd(*projectDir, "go", "run", *mainPath)
 			proc := &process{
 				pre,
@@ -74,22 +73,48 @@ func main() {
 
 			wg.Add(1)
 			go func() {
-
 				defer wg.Done()
 				fmt.Printf("hermes: running %s ...\n", projectName)
 				errLogger(proc.command.Start())
 
-				go procWait(wait, proc)
+				// waits for process to complete.
+				go func() {
+					select {
+					case wait <- proc.command.Wait():
+						close(closeWait)
+						return
+					case <-closeWait:
+						close(wait)
+						return
+					}
+				}()
 
 				select {
-				case <-listen:
-					clean(proc)
+				case <-watch:
+					closeWait <- true
+					clean(wait,proc)
 					return
 				case <-interrupt:
-					clean(proc)
+					closeWait <- true
+					clean(wait,proc)
 					fmt.Printf("\n%s has received SIGINT\n",projectName)
-					<-listen
-					return
+					newWG := sync.WaitGroup{}
+
+					newWG.Add(1)
+					// listen or die
+					go func() {
+						defer newWG.Done()
+						select {
+							// dequeue, quirk
+						case someChange := <-watch:
+							// enqueued
+							watch <- someChange
+						case <-interrupt:
+							fmt.Println("\n hermes has received SIGINT")
+							os.Exit(0)
+						}
+					}()
+					newWG.Wait()
 				case err := <-wait:
 					if err == nil {
 						fmt.Printf("hermes: %s run was successful, exit code 0\n", projectName)
@@ -100,7 +125,6 @@ func main() {
 							fmt.Printf("hermes: %s run was unsuccessful, exit code %d\n", projectName, code)
 						}
 					}
-					return
 				}
 			}()
 			wg.Wait()
@@ -108,20 +132,20 @@ func main() {
 
 		} else if *gotest {
 			pre := cmd(*projectDir, "go", "test")
-			errLogger(notify.Watch(*projectDir, listen, notify.All))
+			errLogger(notify.Watch(*projectDir, watch, notify.All))
 			go func() {
 				fmt.Printf("hermes: testing %s\n", projectName)
 				errLogger(pre.Start())
 				pre.Wait()
 			}()
-			<-listen
+			<-watch
 			err := pre.Process.Signal(os.Kill)
 			errLogger(err)
 			log.Println("hermes: retesting...")
 		} else if *gobuild {
 			//todo
 			pre := cmd(*projectDir, "go", "build")
-			errLogger(notify.Watch(*projectDir, listen, notify.All))
+			errLogger(notify.Watch(*projectDir, watch, notify.All))
 			go func() {
 				fmt.Printf("hermes: building %s\n", projectName)
 				errLogger(pre.Start())
@@ -129,7 +153,7 @@ func main() {
 				// run the build: ./projectName
 				cmd("", projectName)
 			}()
-			<-listen
+			<-watch
 			err := pre.Process.Signal(os.Kill)
 			errLogger(err)
 			log.Println("hermes: rebuilding")
@@ -138,27 +162,15 @@ func main() {
 	}
 }
 
-// procWait waits for the command to complete, If it completed
-// without interrupt being called it writes to the chan error
-func procWait(err chan error, proc *process) {
-	someErr := proc.command.Wait()
-	err <- someErr
-}
-func listen(someListen chan notify.EventInfo)  {
-	<-someListen
-	return
-}
-
-func terminate(someTerm chan os.Signal)  {
-	<-someTerm
-	return
-}
-// clean releases resources of the process and then does a KILL
-func clean(proc *process) {
-//	proc.mutex.Lock()
-	_ = proc.command.Process.Release()
-	_ = proc.command.Process.Kill()
-//	proc.mutex.Unlock()
+// clean terminates the program by sending a SIGKILL
+// it also releases resources.
+//
+// !!! process.Release leaks resources after parent process has returned
+func clean(wait chan error,proc *process) {
+	err := proc.command.Process.Kill()
+	if err != nil{
+		_,_ =fmt.Fprintf(os.Stdout,err.Error())
+	}
 }
 
 // lookForMain looks for main.go file in the directory given
