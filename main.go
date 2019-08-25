@@ -15,12 +15,20 @@ import (
 type process struct {
 	command *exec.Cmd
 
-	// I have not come round to using this
-	// todo: check for race conditions
+	// I haven't come round to using this
+	// todo: check for race conditions if any
 	mutex   sync.Mutex
 }
 
+
+
 func main() {
+	var help = `
+	USAGE: ./hermes -project=ProjectDirectory -gorun
+	Hermes reruns or rebuilds or retests your project every time a change is made
+	in your project directory
+	`
+
 	projectDir := flag.String("project", "",
 		"it points to the project directory to watch for changes")
 	mainPath := flag.String("main", "",
@@ -34,6 +42,7 @@ func main() {
 	flag.Parse()
 
 	if *projectDir == "" {
+		_,_ = fmt.Fprint(os.Stderr,help)
 		flag.PrintDefaults()
 		return
 	}
@@ -43,6 +52,13 @@ func main() {
 			errLogger(err)
 		}
 		*mainPath = filePath
+	}
+
+	// only a single bool flag should be true
+	if *gorun == true && *gobuild == true || *gorun == true && *gotest == true || *gotest == true && *gobuild == true{
+		_,_ = fmt.Fprint(os.Stderr,help)
+		flag.PrintDefaults()
+		return
 	}
 
 	// use gorun = true as default value
@@ -61,14 +77,12 @@ func main() {
 		closeWait := make(chan bool, 1)
 
 		if *gorun {
-
 			// a bit quirky 😞
 			signal.Notify(interrupt, os.Interrupt)
 			errLogger(notify.Watch(*projectDir, watch, notify.All))
 			pre := cmd(*projectDir, "go", "run", *mainPath)
 			proc := &process{
-				pre,
-				sync.Mutex{},
+				command:pre,
 			}
 
 			wg.Add(1)
@@ -104,13 +118,14 @@ func main() {
 					// listen or die
 					go func() {
 						defer newWG.Done()
+						fmt.Printf("\nhermes waiting for changes on %s\n",projectName)
 						select {
 							// dequeue, quirk
 						case someChange := <-watch:
 							// enqueued
 							watch <- someChange
 						case <-interrupt:
-							fmt.Println("\n hermes has received SIGINT")
+							fmt.Println("\nhermes has received SIGINT")
 							os.Exit(0)
 						}
 					}()
@@ -125,12 +140,30 @@ func main() {
 							fmt.Printf("hermes: %s run was unsuccessful, exit code %d\n", projectName, code)
 						}
 					}
+
+					// watch for file changes or SIGINT
+					newWG := sync.WaitGroup{}
+					newWG.Add(1)
+					go func() {
+						defer newWG.Done()
+						fmt.Printf("\nhermes waiting for changes on %s\n",projectName)
+						select {
+						case someChange := <- watch:
+							watch <- someChange
+						case <-interrupt:
+							fmt.Println("\nhermes has received SIGINT")
+							os.Exit(0)
+						}
+
+					}()
+					newWG.Wait()
 				}
 			}()
 			wg.Wait()
 			log.Printf("\n\nhermes: rerunning %s ...\n", projectName)
 
 		} else if *gotest {
+			// todo gotest
 			pre := cmd(*projectDir, "go", "test")
 			errLogger(notify.Watch(*projectDir, watch, notify.All))
 			go func() {
@@ -143,7 +176,7 @@ func main() {
 			errLogger(err)
 			log.Println("hermes: retesting...")
 		} else if *gobuild {
-			//todo
+			// todo gobuild
 			pre := cmd(*projectDir, "go", "build")
 			errLogger(notify.Watch(*projectDir, watch, notify.All))
 			go func() {
