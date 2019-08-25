@@ -5,7 +5,7 @@ for every change made (notify.ALL). Works on Linux.
 
 Still a work in progress.
 
-Catchy name 😂.
+Catchy name.
 The program should help when using go's templating system in doing frontend work (why not automate this😭).
 Or whatever else you may find it useful for.
 
