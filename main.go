@@ -14,7 +14,6 @@ import (
 
 type process struct {
 	command *exec.Cmd
-
 	// I haven't come round to using this
 	// todo: check for race conditions if any
 	mutex sync.Mutex
@@ -67,6 +66,7 @@ func main() {
 
 	for {
 		wg := sync.WaitGroup{}
+
 		watch := make(chan notify.EventInfo, 1)
 		interrupt := make(chan os.Signal, 1)
 		wait := make(chan error, 1)
@@ -87,7 +87,7 @@ func main() {
 				fmt.Printf("hermes: running %s ...\n", projectName)
 				errLogger(proc.command.Start())
 
-				// waits for process to complete.
+				// goroutine waits for process to complete or for wait chan to be closed
 				go func() {
 					select {
 					case wait <- proc.command.Wait():
@@ -99,17 +99,20 @@ func main() {
 					}
 				}()
 
+				// waits for program execution
+				// watches for changes
+				// listens for a SIGINT
 				select {
 				case <-watch:
 					closeWait <- true
-					clean(wait, proc)
+					kill(proc)
 					return
 				case <-interrupt:
 					closeWait <- true
-					clean(wait, proc)
+					kill(proc)
 					fmt.Printf("\n%s has received SIGINT\n", projectName)
-					newWG := sync.WaitGroup{}
 
+					newWG := sync.WaitGroup{}
 					newWG.Add(1)
 					// listen or die
 					go func() {
@@ -191,11 +194,12 @@ func main() {
 	}
 }
 
-// clean terminates the program by sending a SIGKILL
-// it also releases resources.
+// kill terminates the program by sending a SIGKILL
+// it also releases resources. Processes dont leak e.g.
+// Port numbers are released for http.Servers
 //
-// !!! process.Release leaks resources after parent process has returned
-func clean(wait chan error, proc *process) {
+// !!! process.Release leaks child process resources after parent has returned
+func kill(proc *process) {
 	err := proc.command.Process.Kill()
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stdout, err.Error())
@@ -248,13 +252,8 @@ func cmd(projectDir string, name string, arg ...string) *exec.Cmd {
 	return cmd
 }
 
-//
 func errLogger(err error) {
 	if err != nil {
 		log.Fatal(err)
 	}
 }
-
-// BUGS
-// processes leak after hermes has returned
-// should release resources of previous os.Process
