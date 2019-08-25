@@ -17,17 +17,13 @@ type process struct {
 
 	// I haven't come round to using this
 	// todo: check for race conditions if any
-	mutex   sync.Mutex
+	mutex sync.Mutex
 }
 
-
-
 func main() {
-	var help = `
-	USAGE: ./hermes -project=ProjectDirectory -gorun
-	Hermes reruns or rebuilds or retests your project every time a change is made
-	in your project directory
-	`
+	var help = "USAGE: ./hermes -project=ProjectDirectory -gorun\n" +
+		"Hermes reruns or rebuilds or retests your project every time a saved change is made\n" +
+		"in your project directory\n"
 
 	projectDir := flag.String("project", "",
 		"it points to the project directory to watch for changes")
@@ -42,7 +38,7 @@ func main() {
 	flag.Parse()
 
 	if *projectDir == "" {
-		_,_ = fmt.Fprint(os.Stderr,help)
+		_, _ = fmt.Fprintf(os.Stderr, help)
 		flag.PrintDefaults()
 		return
 	}
@@ -55,8 +51,8 @@ func main() {
 	}
 
 	// only a single bool flag should be true
-	if *gorun == true && *gobuild == true || *gorun == true && *gotest == true || *gotest == true && *gobuild == true{
-		_,_ = fmt.Fprint(os.Stderr,help)
+	if *gorun == true && *gobuild == true || *gorun == true && *gotest == true || *gotest == true && *gobuild == true {
+		_, _ = fmt.Fprintf(os.Stderr, help)
 		flag.PrintDefaults()
 		return
 	}
@@ -82,7 +78,7 @@ func main() {
 			errLogger(notify.Watch(*projectDir, watch, notify.All))
 			pre := cmd(*projectDir, "go", "run", *mainPath)
 			proc := &process{
-				command:pre,
+				command: pre,
 			}
 
 			wg.Add(1)
@@ -106,21 +102,21 @@ func main() {
 				select {
 				case <-watch:
 					closeWait <- true
-					clean(wait,proc)
+					clean(wait, proc)
 					return
 				case <-interrupt:
 					closeWait <- true
-					clean(wait,proc)
-					fmt.Printf("\n%s has received SIGINT\n",projectName)
+					clean(wait, proc)
+					fmt.Printf("\n%s has received SIGINT\n", projectName)
 					newWG := sync.WaitGroup{}
 
 					newWG.Add(1)
 					// listen or die
 					go func() {
 						defer newWG.Done()
-						fmt.Printf("\nhermes waiting for changes on %s\n",projectName)
+						fmt.Printf("\nhermes waiting for changes on %s\n", projectName)
 						select {
-							// dequeue, quirk
+						// dequeue, quirk
 						case someChange := <-watch:
 							// enqueued
 							watch <- someChange
@@ -146,9 +142,9 @@ func main() {
 					newWG.Add(1)
 					go func() {
 						defer newWG.Done()
-						fmt.Printf("\nhermes waiting for changes on %s\n",projectName)
+						fmt.Printf("\nhermes waiting for changes on %s\n", projectName)
 						select {
-						case someChange := <- watch:
+						case someChange := <-watch:
 							watch <- someChange
 						case <-interrupt:
 							fmt.Println("\nhermes has received SIGINT")
@@ -199,10 +195,10 @@ func main() {
 // it also releases resources.
 //
 // !!! process.Release leaks resources after parent process has returned
-func clean(wait chan error,proc *process) {
+func clean(wait chan error, proc *process) {
 	err := proc.command.Process.Kill()
-	if err != nil{
-		_,_ =fmt.Fprintf(os.Stdout,err.Error())
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stdout, err.Error())
 	}
 }
 
