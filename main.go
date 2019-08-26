@@ -12,11 +12,21 @@ import (
 	"sync"
 )
 
-type process struct {
-	command *exec.Cmd
-	// I haven't come round to using this
-	// todo: check for race conditions if any
-	mutex sync.Mutex
+var (
+	projectDir = flag.String("project", "",
+		"it points to the project directory to watch for changes")
+	mainPath = flag.String("main", "",
+		"it points to the main.go file from where the program is run")
+)
+
+// message wraps the necessary channels and command to be used
+// during the projects execution lifetime on a hermes instance
+type message struct {
+	cmd       *exec.Cmd
+	interrupt chan os.Signal
+	watch     chan notify.EventInfo
+	wait      chan error
+	closeWait chan bool
 }
 
 func main() {
@@ -24,10 +34,6 @@ func main() {
 		"Hermes reruns or rebuilds or retests your project every time a saved change is made\n" +
 		"in your project directory\n"
 
-	projectDir := flag.String("project", "",
-		"it points to the project directory to watch for changes")
-	mainPath := flag.String("main", "",
-		"it points to the main.go file from where the program is run")
 	gorun := flag.Bool("gorun", false,
 		"if true it does a 'go run ...' for every change made")
 	gotest := flag.Bool("gotest", false,
@@ -61,140 +67,155 @@ func main() {
 		*gorun = true
 	}
 
-	subs := strings.SplitN(*projectDir, "/", -1)
-	projectName := subs[len(subs)-1]
-
 	for {
-
-		// for each iteration are these data structures created?
-		// todo: move outside for loop?
-		wg := sync.WaitGroup{}
-
 		watch := make(chan notify.EventInfo, 1)
 		interrupt := make(chan os.Signal, 1)
 		wait := make(chan error, 1)
 		closeWait := make(chan bool, 1)
 
 		if *gorun {
-			// a bit quirky 😞
-			signal.Notify(interrupt, os.Interrupt)
-			errLogger(notify.Watch(*projectDir, watch, notify.All))
 			pre := cmd(*projectDir, "go", "run", *mainPath)
-			proc := &process{
-				command: pre,
+			run := &message{
+				pre,
+				interrupt,
+				watch,
+				wait,
+				closeWait,
 			}
-
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				fmt.Printf("hermes: running %s ...\n", projectName)
-				errLogger(proc.command.Start())
-
-				// goroutine waits for process to complete or for wait chan to be closed
-				go func() {
-					select {
-					case wait <- proc.command.Wait():
-						close(closeWait)
-						return
-					case <-closeWait:
-						close(wait)
-						return
-					}
-				}()
-
-				// waits for program execution
-				// watches for changes
-				// listens for a SIGINT
-				select {
-				case <-watch:
-					closeWait <- true
-					kill(proc)
-					return
-				case <-interrupt:
-					closeWait <- true
-					kill(proc)
-					fmt.Printf("\n%s has received SIGINT\n", projectName)
-
-					newWG := sync.WaitGroup{}
-					newWG.Add(1)
-					// listen or die
-					go func() {
-						defer newWG.Done()
-						fmt.Printf("\nhermes waiting for changes on %s\n", projectName)
-						select {
-						// dequeue, quirk
-						case someChange := <-watch:
-							// enqueued
-							watch <- someChange
-						case <-interrupt:
-							fmt.Println("\nhermes has received SIGINT")
-							os.Exit(0)
-						}
-					}()
-					newWG.Wait()
-				case err := <-wait:
-					if err == nil {
-						fmt.Printf("hermes: %s run was successful, exit code 0\n", projectName)
-					} else {
-						if exitError, ok := err.(*exec.ExitError); ok {
-							code := exitError.ExitCode()
-							// program error: 1, shut by signal: -1
-							fmt.Printf("hermes: %s run was unsuccessful, exit code %d\n", projectName, code)
-						}
-					}
-
-					// watch for file changes or SIGINT
-					newWG := sync.WaitGroup{}
-					newWG.Add(1)
-					go func() {
-						defer newWG.Done()
-						fmt.Printf("\nhermes waiting for changes on %s\n", projectName)
-						select {
-						case someChange := <-watch:
-							watch <- someChange
-						case <-interrupt:
-							fmt.Println("\nhermes has received SIGINT")
-							os.Exit(0)
-						}
-
-					}()
-					newWG.Wait()
-				}
-			}()
-			wg.Wait()
-			log.Printf("\n\nhermes: rerunning %s ...\n", projectName)
+			run.carryMessage("run")
 
 		} else if *gotest {
-			// todo gotest
 			pre := cmd(*projectDir, "go", "test")
-			errLogger(notify.Watch(*projectDir, watch, notify.All))
-			go func() {
-				fmt.Printf("hermes: testing %s\n", projectName)
-				errLogger(pre.Start())
-				pre.Wait()
-			}()
-			<-watch
-			err := pre.Process.Signal(os.Kill)
-			errLogger(err)
-			log.Println("hermes: retesting...")
+			test := &message{
+				pre,
+				interrupt,
+				watch,
+				wait,
+				closeWait,
+			}
+			test.carryMessage("test")
+
 		} else if *gobuild {
-			// todo gobuild
 			pre := cmd(*projectDir, "go", "build")
-			errLogger(notify.Watch(*projectDir, watch, notify.All))
-			go func() {
-				fmt.Printf("hermes: building %s\n", projectName)
-				errLogger(pre.Start())
-				pre.Wait()
-				// run the build: ./projectName
-				cmd("", projectName)
-			}()
-			<-watch
-			err := pre.Process.Signal(os.Kill)
-			errLogger(err)
-			log.Println("hermes: rebuilding")
+			build := &message{
+				pre,
+				interrupt,
+				watch,
+				wait,
+				closeWait,
+			}
+			build.carryMessage("build")
+
 		}
 
 	}
+}
+
+// sendMessage
+func (m *message) carryMessage(execution string) {
+
+	// this looks dumb ikr 😆
+	var execute, executing string
+	switch execution {
+	case "run":
+		execute = "run"
+		executing = "running"
+	case "build":
+		execute = "build"
+		executing = "building"
+	case "test":
+		execute = "test"
+		executing = "testing"
+	}
+
+	wg := sync.WaitGroup{}
+
+	subs := strings.SplitN(*projectDir, "/", -1)
+	projectName := subs[len(subs)-1]
+
+	// a bit quirky 😞
+	signal.Notify(m.interrupt, os.Interrupt)
+	errLogger(notify.Watch(*projectDir, m.watch, notify.All))
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		fmt.Printf("hermes: %s %s ...\n", executing, projectName)
+		errLogger(m.cmd.Start())
+
+		// goroutine waits for process to complete or for wait chan to be closed
+		go func() {
+			select {
+			case m.wait <- m.cmd.Wait():
+				close(m.closeWait)
+				return
+			case <-m.closeWait:
+				close(m.wait)
+				return
+			}
+		}()
+
+		// waits for program execution
+		// watches for changes
+		// listens for a SIGINT
+		select {
+		case <-m.watch:
+			m.closeWait <- true
+			kill(m.cmd.Process)
+			return
+		case <-m.interrupt:
+			m.closeWait <- true
+			kill(m.cmd.Process)
+			fmt.Printf("\n%s has received SIGINT\n", projectName)
+
+			newWG := sync.WaitGroup{}
+			newWG.Add(1)
+			// listen or die
+			go func() {
+				defer newWG.Done()
+				fmt.Printf("\nhermes waiting for changes on %s\n", projectName)
+				select {
+				// dequeue, quirk
+				case someChange := <-m.watch:
+					// enqueued
+					m.watch <- someChange
+				case <-m.interrupt:
+					fmt.Println("\nhermes has received SIGINT")
+					os.Exit(0)
+				}
+			}()
+			newWG.Wait()
+		case err := <-m.wait:
+			if err == nil {
+				fmt.Printf("hermes: %s %s was successful, exit code 0\n", projectName, execute)
+			} else {
+				if exitError, ok := err.(*exec.ExitError); ok {
+					code := exitError.ExitCode()
+					// program error: 1, shut by signal: -1
+					fmt.Printf("hermes: %s %s was unsuccessful, exit code %d\n", projectName, execute, code)
+				}
+			}
+
+			// watch for file changes or SIGINT
+			newWG := sync.WaitGroup{}
+			newWG.Add(1)
+			go func() {
+				defer newWG.Done()
+				fmt.Printf("\nhermes waiting for changes on %s\n", projectName)
+				select {
+				case someChange := <-m.watch:
+					m.watch <- someChange
+				case <-m.interrupt:
+					fmt.Println("\nhermes has received SIGINT")
+					os.Exit(0)
+				}
+
+			}()
+			newWG.Wait()
+		}
+	}()
+	wg.Wait()
+	log.Printf("\n\nhermes: re%s %s ...\n", executing, projectName)
 }
 
 // kill terminates the program by sending a SIGKILL
@@ -202,8 +223,8 @@ func main() {
 // Port numbers are released for http.Servers
 //
 // !!! process.Release leaks child process resources after parent has returned
-func kill(proc *process) {
-	err := proc.command.Process.Kill()
+func kill(proc *os.Process) {
+	err := proc.Kill()
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stdout, err.Error())
 	}
@@ -263,5 +284,5 @@ func errLogger(err error) {
 
 // BUG
 // Changes should be aggregated. Every single change
-// creates spawns rerun that leaks resources save for
-// the initial for the first change rerun
+// made spawns rerun that leaks resources save for
+// the initial rerun
