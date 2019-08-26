@@ -13,8 +13,10 @@ import (
 )
 
 var (
+	// projectDir points to the project directory to watch for changes
 	projectDir = flag.String("project", "",
 		"it points to the project directory to watch for changes")
+	// mainPath provides the path to the .go main file
 	mainPath = flag.String("main", "",
 		"it points to the main.go file from where the program is run")
 )
@@ -30,14 +32,18 @@ type message struct {
 }
 
 func main() {
+	// help is the help message on usage of hermes
 	var help = "USAGE: ./hermes -project=ProjectDirectory -gorun\n" +
 		"Hermes reruns or rebuilds or retests your project every time a saved change is made\n" +
 		"in your project directory\n"
 
+	// gorun does 'go run'
 	gorun := flag.Bool("gorun", false,
 		"if true it does a 'go run ...' for every change made")
+	// gotest does a 'go test'
 	gotest := flag.Bool("gotest", false,
 		"if true it does a 'go test' for every change made")
+	// gobuild does a 'go build'
 	gobuild := flag.Bool("gobuild", false,
 		"if true does a 'go build' for every change made")
 	flag.Parse()
@@ -55,7 +61,7 @@ func main() {
 		*mainPath = filePath
 	}
 
-	// only a single bool flag should be true
+	// only a single execution flag should be true
 	if *gorun == true && *gobuild == true || *gorun == true && *gotest == true || *gotest == true && *gobuild == true {
 		_, _ = fmt.Fprintf(os.Stderr, help)
 		flag.PrintDefaults()
@@ -68,6 +74,7 @@ func main() {
 	}
 
 	for {
+		// created in each iteration. To optimize later?
 		watch := make(chan notify.EventInfo, 1)
 		interrupt := make(chan os.Signal, 1)
 		wait := make(chan error, 1)
@@ -111,7 +118,8 @@ func main() {
 	}
 }
 
-// sendMessage
+// carryMessage handles the child process execution, termination and re-execution as needed
+// by directory changes made and SIGINT
 func (m *message) carryMessage(execution string) {
 
 	// this looks dumb ikr 😆
@@ -219,10 +227,6 @@ func (m *message) carryMessage(execution string) {
 }
 
 // kill terminates the program by sending a SIGKILL
-// it also releases resources. Processes dont leak e.g.
-// Port numbers are released for http.Servers
-//
-// !!! process.Release leaks child process resources after parent has returned
 func kill(proc *os.Process) {
 	err := proc.Kill()
 	if err != nil {
@@ -281,8 +285,3 @@ func errLogger(err error) {
 		log.Fatal(err)
 	}
 }
-
-// BUG
-// Changes should be aggregated. Every single change
-// made spawns rerun that leaks resources save for
-// the initial rerun
