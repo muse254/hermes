@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"time"
 )
 
 var (
@@ -21,9 +22,9 @@ var (
 		"it points to the main.go file from where the program is run")
 )
 
-// message wraps the necessary channels and command to be used
-// during the projects execution lifetime on a hermes instance
-type message struct {
+// wingedSandals wraps the necessary channels and command to be used
+// during the project's execution lifetime on a hermes instance
+type wingedSandals struct {
 	cmd       *exec.Cmd
 	interrupt chan os.Signal
 	watch     chan notify.EventInfo
@@ -32,7 +33,7 @@ type message struct {
 }
 
 func main() {
-	// help is the help message on usage of hermes
+	// help is the help wingedSandals on usage of hermes
 	var help = "USAGE: ./hermes -project=ProjectDirectory -gorun\n" +
 		"Hermes reruns or rebuilds or retests your project every time a saved change is made\n" +
 		"in your project directory\n"
@@ -81,9 +82,8 @@ func main() {
 		closeWait := make(chan bool, 1)
 
 		if *gorun {
-			pre := cmd(*projectDir, "go", "run", *mainPath)
-			run := &message{
-				pre,
+			run := &wingedSandals{
+				message(*projectDir, "go", "run", *mainPath),
 				interrupt,
 				watch,
 				wait,
@@ -92,9 +92,8 @@ func main() {
 			run.carryMessage("run")
 
 		} else if *gotest {
-			pre := cmd(*projectDir, "go", "test")
-			test := &message{
-				pre,
+			test := &wingedSandals{
+				message(*projectDir, "go", "test"),
 				interrupt,
 				watch,
 				wait,
@@ -103,36 +102,30 @@ func main() {
 			test.carryMessage("test")
 
 		} else if *gobuild {
-			pre := cmd(*projectDir, "go", "build")
-			build := &message{
-				pre,
+			build := &wingedSandals{
+				message(*projectDir, "go", "build"),
 				interrupt,
 				watch,
 				wait,
 				closeWait,
 			}
 			build.carryMessage("build")
-
 		}
-
 	}
 }
 
 // carryMessage handles the child process execution, termination and re-execution as needed
 // by directory changes made and SIGINT
-func (m *message) carryMessage(execution string) {
+func (m *wingedSandals) carryMessage(execute string) {
 
 	// this looks dumb ikr 😆
-	var execute, executing string
-	switch execution {
+	var executing string
+	switch execute {
 	case "run":
-		execute = "run"
 		executing = "running"
 	case "build":
-		execute = "build"
 		executing = "building"
 	case "test":
-		execute = "test"
 		executing = "testing"
 	}
 
@@ -163,7 +156,7 @@ func (m *message) carryMessage(execution string) {
 			}
 		}()
 
-		// waits for program execution
+		// waits for program execute
 		// watches for changes
 		// listens for a SIGINT
 		select {
@@ -189,6 +182,9 @@ func (m *message) carryMessage(execution string) {
 					m.watch <- someChange
 				case <-m.interrupt:
 					fmt.Println("\nhermes has received SIGINT")
+					pState, _ := m.cmd.Process.Wait()
+					fmt.Printf("\n%s exit status is %v", projectName, pState.Exited())
+
 					os.Exit(0)
 				}
 			}()
@@ -232,6 +228,10 @@ func kill(proc *os.Process) {
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stdout, err.Error())
 	}
+	err = proc.Release()
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stdout, err.Error())
+	}
 }
 
 // lookForMain looks for main.go file in the directory given
@@ -269,8 +269,8 @@ func lookForMain(path string) (mainFile string, err error) {
 	return
 }
 
-// cmd initialises the command
-func cmd(projectDir string, name string, arg ...string) *exec.Cmd {
+// message initialises the command
+func message(projectDir string, name string, arg ...string) *exec.Cmd {
 	cmd := exec.Command(name, arg...)
 	cmd.Stdout = os.Stdout
 	cmd.Stdin = os.Stdin
@@ -278,6 +278,35 @@ func cmd(projectDir string, name string, arg ...string) *exec.Cmd {
 	cmd.Stderr = os.Stderr
 
 	return cmd
+}
+
+// todo: treat changes within a given time diff. as a single change?
+// playLyre aggregates changes that span a time difference of
+// _ seconds between two changes in the project and takes a chan int to write the
+// number of changes to. If it waits after _ seconds the next change is treated as
+// a new different set of changes
+func playLyre(watch chan notify.EventInfo, s time.Duration, single chan int) {
+	var stop, reset chan bool
+	dealer := func() {
+		select {
+		case <-watch:
+		}
+	}
+
+	// listen for a single change
+	var changes int
+	for {
+		go dealer()
+		select {
+		case <-reset:
+			break
+		case <-stop:
+			single <- changes
+			return
+		}
+		changes++
+	}
+
 }
 
 func errLogger(err error) {
