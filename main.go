@@ -56,9 +56,7 @@ func main() {
 	}
 	if *mainPath == "" {
 		filePath, err := wingedSandals(*projectDir)
-		if err != nil {
-			errLogger(err)
-		}
+		errLogger(err)
 		*mainPath = filePath
 	}
 
