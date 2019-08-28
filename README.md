@@ -30,7 +30,7 @@ Note that this error:
 
     ./main.go:123:25: exitError.ExitCode undefined (type *exec.ExitError has no field or method ExitCode)
 
-is flagged on go1.10.4, and I suppose later versions, you should use go1.12.5 and later versions.
+is flagged on go1.10.4, and I suppose earlier versions, you should use go1.12.5 and later versions.
 
 ## 
 Any comments, suggestions, PRs, or code reviews are welcome.
