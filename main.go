@@ -332,7 +332,7 @@ func playLyre(s time.Duration, songs chan int) {
 	go func() {
 		defer group.Done()
 		timer := time.NewTimer(s)
-		<- timer.C
+		<-timer.C
 		done <- true
 	}()
 
