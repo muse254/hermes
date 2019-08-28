@@ -314,6 +314,15 @@ func playLyre(s time.Duration, songs chan int) {
 
 	errLogger(notify.Watch(*projectDir, song, notify.All))
 
+	// setting the timeout
+	group.Add(1)
+	go func() {
+		defer group.Done()
+		timer := time.NewTimer(s)
+		<-timer.C
+		done <- true
+	}()
+
 	// goroutine waiting for changes & timeout
 	group.Add(1)
 	go func() {
@@ -327,15 +336,6 @@ func playLyre(s time.Duration, songs chan int) {
 		}
 	}()
 
-	// setting the timeout
-	group.Add(1)
-	go func() {
-		defer group.Done()
-		timer := time.NewTimer(s)
-		<-timer.C
-		done <- true
-	}()
-
 	group.Wait()
 	songs <- count
 }
@@ -347,4 +347,4 @@ func errLogger(err error) {
 }
 
 // MAJOR BUG
-// making changes while running a process leaks the previous processes resources
+// making changes while running a process leaks the previous process's resources
