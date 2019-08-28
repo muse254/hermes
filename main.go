@@ -22,9 +22,9 @@ var (
 		"it points to the main.go file from where the program is run")
 )
 
-// wingedSandals wraps the necessary channels and command to be used
+// journey wraps the necessary channels and command to be used
 // during the project's execution lifetime on a hermes instance
-type wingedSandals struct {
+type journey struct {
 	cmd       *exec.Cmd
 	interrupt chan os.Signal
 	watch     chan notify.EventInfo
@@ -33,7 +33,7 @@ type wingedSandals struct {
 }
 
 func main() {
-	// help is the help wingedSandals on usage of hermes
+	// help is the help journey on usage of hermes
 	var help = "USAGE: ./hermes -project=ProjectDirectory -gorun\n" +
 		"Hermes reruns or rebuilds or retests your project every time a saved change is made\n" +
 		"in your project directory\n"
@@ -55,7 +55,7 @@ func main() {
 		return
 	}
 	if *mainPath == "" {
-		filePath, err := lookForMain(*projectDir)
+		filePath, err := wingedSandals(*projectDir)
 		if err != nil {
 			errLogger(err)
 		}
@@ -82,41 +82,41 @@ func main() {
 		closeWait := make(chan bool, 1)
 
 		if *gorun {
-			run := &wingedSandals{
+			hermes := &journey{
 				message(*projectDir, "go", "run", *mainPath),
 				interrupt,
 				watch,
 				wait,
 				closeWait,
 			}
-			run.carryMessage("run")
+			hermes.carryMessage("run")
 
 		} else if *gotest {
-			test := &wingedSandals{
+			hermes := &journey{
 				message(*projectDir, "go", "test"),
 				interrupt,
 				watch,
 				wait,
 				closeWait,
 			}
-			test.carryMessage("test")
+			hermes.carryMessage("test")
 
 		} else if *gobuild {
-			build := &wingedSandals{
+			hermes := &journey{
 				message(*projectDir, "go", "build"),
 				interrupt,
 				watch,
 				wait,
 				closeWait,
 			}
-			build.carryMessage("build")
+			hermes.carryMessage("build")
 		}
 	}
 }
 
 // carryMessage handles the child process execution, termination and re-execution as needed
 // by directory changes made and SIGINT
-func (m *wingedSandals) carryMessage(execute string) {
+func (j *journey) carryMessage(execute string) {
 
 	// this looks dumb ikr 😆
 	var executing string
@@ -134,24 +134,26 @@ func (m *wingedSandals) carryMessage(execute string) {
 	subs := strings.SplitN(*projectDir, "/", -1)
 	projectName := subs[len(subs)-1]
 
+	songs := make(chan int, 1)
+
 	// a bit quirky 😞
-	signal.Notify(m.interrupt, os.Interrupt)
-	errLogger(notify.Watch(*projectDir, m.watch, notify.All))
+	signal.Notify(j.interrupt, os.Interrupt)
+	errLogger(notify.Watch(*projectDir, j.watch, notify.All))
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		fmt.Printf("hermes: %s %s ...\n", executing, projectName)
-		errLogger(m.cmd.Start())
+		errLogger(j.cmd.Start())
 
 		// goroutine waits for process to complete or for wait chan to be closed
 		go func() {
 			select {
-			case m.wait <- m.cmd.Wait():
-				close(m.closeWait)
+			case j.wait <- j.cmd.Wait():
+				close(j.closeWait)
 				return
-			case <-m.closeWait:
-				close(m.wait)
+			case <-j.closeWait:
+				close(j.wait)
 				return
 			}
 		}()
@@ -160,13 +162,34 @@ func (m *wingedSandals) carryMessage(execute string) {
 		// watches for changes
 		// listens for a SIGINT
 		select {
-		case <-m.watch:
-			m.closeWait <- true
-			kill(m.cmd.Process)
+		case <-j.watch:
+			j.closeWait <- true
+			kill(j.cmd.Process)
+
+			newWG := sync.WaitGroup{}
+			newWG.Add(1)
+			// playLyre while waiting for all changes to be aggregated,
+			// write number of changes recorded to songs 😷
+			go func() {
+				defer newWG.Done()
+				playLyre(3*time.Second, songs)
+				select {
+				case <-j.interrupt:
+					fmt.Println("\nhermes has received SIGINT")
+					os.Exit(0)
+				// dequeue, enqueue
+				case changes := <-songs:
+					songs <- changes
+				}
+			}()
+			newWG.Wait()
+		case <-songs:
+			fmt.Printf("\n hermes has aggregated %d changes on %s/n", <-songs, projectName)
 			return
-		case <-m.interrupt:
-			m.closeWait <- true
-			kill(m.cmd.Process)
+
+		case <-j.interrupt:
+			j.closeWait <- true
+			kill(j.cmd.Process)
 			fmt.Printf("\n%s has received SIGINT\n", projectName)
 
 			newWG := sync.WaitGroup{}
@@ -177,19 +200,16 @@ func (m *wingedSandals) carryMessage(execute string) {
 				fmt.Printf("\nhermes waiting for changes on %s\n", projectName)
 				select {
 				// dequeue, quirk
-				case someChange := <-m.watch:
+				case someChange := <-j.watch:
 					// enqueued
-					m.watch <- someChange
-				case <-m.interrupt:
+					j.watch <- someChange
+				case <-j.interrupt:
 					fmt.Println("\nhermes has received SIGINT")
-					pState, _ := m.cmd.Process.Wait()
-					fmt.Printf("\n%s exit status is %v", projectName, pState.Exited())
-
 					os.Exit(0)
 				}
 			}()
 			newWG.Wait()
-		case err := <-m.wait:
+		case err := <-j.wait:
 			if err == nil {
 				fmt.Printf("hermes: %s %s was successful, exit code 0\n", projectName, execute)
 			} else {
@@ -207,9 +227,9 @@ func (m *wingedSandals) carryMessage(execute string) {
 				defer newWG.Done()
 				fmt.Printf("\nhermes waiting for changes on %s\n", projectName)
 				select {
-				case someChange := <-m.watch:
-					m.watch <- someChange
-				case <-m.interrupt:
+				case someChange := <-j.watch:
+					j.watch <- someChange
+				case <-j.interrupt:
 					fmt.Println("\nhermes has received SIGINT")
 					os.Exit(0)
 				}
@@ -222,6 +242,7 @@ func (m *wingedSandals) carryMessage(execute string) {
 	log.Printf("\n\nhermes: re%s %s ...\n", executing, projectName)
 }
 
+// todo
 // kill terminates the program by sending a SIGKILL
 func kill(proc *os.Process) {
 	err := proc.Kill()
@@ -234,9 +255,9 @@ func kill(proc *os.Process) {
 	}
 }
 
-// lookForMain looks for main.go file in the directory given
+// wingedSandals looks for main.go file in the directory given
 // returning the main file if it was found and err, if any
-func lookForMain(path string) (mainFile string, err error) {
+func wingedSandals(path string) (mainFile string, err error) {
 	folder, err := os.Open(path)
 	if err != nil {
 		return "", nil
@@ -260,7 +281,7 @@ func lookForMain(path string) (mainFile string, err error) {
 			return "", nil
 		}
 		if thisFileInfo.IsDir() {
-			mainFile, err = lookForMain(path + "/" + file)
+			mainFile, err = wingedSandals(path + "/" + file)
 			if err != nil {
 				return "", nil
 			}
@@ -269,7 +290,7 @@ func lookForMain(path string) (mainFile string, err error) {
 	return
 }
 
-// message initialises the command
+// message initialises the executable command
 func message(projectDir string, name string, arg ...string) *exec.Cmd {
 	cmd := exec.Command(name, arg...)
 	cmd.Stdout = os.Stdout
@@ -281,32 +302,42 @@ func message(projectDir string, name string, arg ...string) *exec.Cmd {
 }
 
 // todo: treat changes within a given time diff. as a single change?
-// playLyre aggregates changes that span a time difference of
-// _ seconds between two changes in the project and takes a chan int to write the
-// number of changes to. If it waits after _ seconds the next change is treated as
-// a new different set of changes
-func playLyre(watch chan notify.EventInfo, s time.Duration, single chan int) {
-	var stop, reset chan bool
-	dealer := func() {
-		select {
-		case <-watch:
-		}
-	}
+// playLyre aggregates changes with a time difference of
+// _ seconds and identifies them as a single change
+func playLyre(s time.Duration, songs chan int) {
 
-	// listen for a single change
-	var changes int
-	for {
-		go dealer()
+	group := sync.WaitGroup{}
+
+	done := make(chan bool, 1)
+	song := make(chan notify.EventInfo, 1)
+	var count int
+
+	errLogger(notify.Watch(*projectDir, song, notify.All))
+
+	// goroutine waiting for changes & timeout
+	group.Add(1)
+	go func() {
+		defer group.Done()
 		select {
-		case <-reset:
-			break
-		case <-stop:
-			single <- changes
+		case <-song:
+			count++
+		case <-done:
+			close(song)
 			return
 		}
-		changes++
-	}
+	}()
 
+	// setting the timeout
+	group.Add(1)
+	go func() {
+		defer group.Done()
+		timer := time.NewTimer(s)
+		<- timer.C
+		done <- true
+	}()
+
+	group.Wait()
+	songs <- count
 }
 
 func errLogger(err error) {
