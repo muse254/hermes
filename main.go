@@ -345,3 +345,6 @@ func errLogger(err error) {
 		log.Fatal(err)
 	}
 }
+
+// MAJOR BUG
+// making changes while running a process leaks the previous processes resources
