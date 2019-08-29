@@ -33,14 +33,14 @@ type journey struct {
 }
 
 func main() {
-	// help is the help journey on usage of hermes
+	// help is the help message on usage of hermes
 	var help = "USAGE: ./hermes -project=ProjectDirectory -gorun\n" +
 		"Hermes reruns or rebuilds or retests your project every time a saved change is made\n" +
 		"in your project directory\n"
 
 	// gorun does 'go run'
 	gorun := flag.Bool("gorun", false,
-		"if true it does a 'go run ...' for every change made")
+		"if true it does a 'go run _.go' for every change made")
 	// gotest does a 'go test'
 	gotest := flag.Bool("gotest", false,
 		"if true it does a 'go test' for every change made")
@@ -61,7 +61,8 @@ func main() {
 	}
 
 	// only a single execution flag should be true
-	if *gorun == true && *gobuild == true || *gorun == true && *gotest == true || *gotest == true && *gobuild == true {
+	if *gorun == true && *gobuild == true || *gorun == true &&
+		*gotest == true || *gotest == true && *gobuild == true {
 		_, _ = fmt.Fprintf(os.Stderr, help)
 		flag.PrintDefaults()
 		return
@@ -89,6 +90,8 @@ func main() {
 			}
 			hermes.carryMessage("run")
 
+			// I have not got to the point of fully implementing or testing
+			// gotest or gobuild. todo after getting done with gorun
 		} else if *gotest {
 			hermes := &journey{
 				message(*projectDir, "go", "test"),
@@ -144,6 +147,7 @@ func (j *journey) carryMessage(execute string) {
 		fmt.Printf("hermes: %s %s ...\n", executing, projectName)
 		errLogger(j.cmd.Start())
 
+		// BUG. Goroutine returns.
 		// goroutine waits for process to complete or for wait chan to be closed
 		go func() {
 			select {
@@ -160,6 +164,7 @@ func (j *journey) carryMessage(execute string) {
 		// watches for changes
 		// listens for a SIGINT
 		select {
+		// This case has a BUG
 		case <-j.watch:
 			j.closeWait <- true
 			kill(j.cmd.Process)
@@ -182,9 +187,10 @@ func (j *journey) carryMessage(execute string) {
 			}()
 			newWG.Wait()
 		case <-songs:
-			fmt.Printf("\n hermes has aggregated %d changes on %s/n", <-songs, projectName)
+			fmt.Printf("\nhermes: aggregated %d changes on %s\n", <-songs, projectName)
 			return
 
+		// this case works perfectly
 		case <-j.interrupt:
 			j.closeWait <- true
 			kill(j.cmd.Process)
@@ -207,6 +213,8 @@ func (j *journey) carryMessage(execute string) {
 				}
 			}()
 			newWG.Wait()
+
+		// this case works perfectly.
 		case err := <-j.wait:
 			if err == nil {
 				fmt.Printf("hermes: %s %s was successful, exit code 0\n", projectName, execute)
@@ -270,6 +278,9 @@ func wingedSandals(path string) (mainFile string, err error) {
 		if file == "main.go" {
 			return path + "/" + file, nil
 		}
+	}
+
+	for _, file := range files {
 		thisFile, err := os.Open(path + "/" + file)
 		if err != nil {
 			return "", nil
@@ -299,7 +310,6 @@ func message(projectDir string, name string, arg ...string) *exec.Cmd {
 	return cmd
 }
 
-// todo: treat changes within a given time diff. as a single change?
 // playLyre aggregates changes with a time difference of
 // _ seconds and identifies them as a single change
 func playLyre(s time.Duration, songs chan int) {
