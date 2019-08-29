@@ -130,8 +130,6 @@ func (j *journey) carryMessage(execute string) {
 		executing = "testing"
 	}
 
-	wg := sync.WaitGroup{}
-
 	subs := strings.SplitN(*projectDir, "/", -1)
 	projectName := subs[len(subs)-1]
 
@@ -141,110 +139,86 @@ func (j *journey) carryMessage(execute string) {
 	signal.Notify(j.interrupt, os.Interrupt)
 	errLogger(notify.Watch(*projectDir, j.watch, notify.All))
 
-	wg.Add(1)
+	fmt.Printf("hermes: %s %s ...\n", executing, projectName)
+	errLogger(j.cmd.Start())
+
+	// BUG. Goroutine returns.
+	// goroutine waits for process to complete or for wait chan to be closed
 	go func() {
-		defer wg.Done()
-		fmt.Printf("hermes: %s %s ...\n", executing, projectName)
-		errLogger(j.cmd.Start())
-
-		// BUG. Goroutine returns.
-		// goroutine waits for process to complete or for wait chan to be closed
-		go func() {
-			select {
-			case j.wait <- j.cmd.Wait():
-				close(j.closeWait)
-				return
-			case <-j.closeWait:
-				close(j.wait)
-				return
-			}
-		}()
-
-		// waits for program execute
-		// watches for changes
-		// listens for a SIGINT
 		select {
-		// This case has a BUG
-		case <-j.watch:
-			j.closeWait <- true
-			kill(j.cmd.Process)
-
-			newWG := sync.WaitGroup{}
-			newWG.Add(1)
-			// playLyre while waiting for all changes to be aggregated,
-			// write number of changes recorded to songs 😷
-			go func() {
-				defer newWG.Done()
-				playLyre(3*time.Second, songs)
-				select {
-				case <-j.interrupt:
-					fmt.Println("\nhermes has received SIGINT")
-					os.Exit(0)
-				// dequeue, enqueue
-				case changes := <-songs:
-					songs <- changes
-				}
-			}()
-			newWG.Wait()
-		case <-songs:
-			fmt.Printf("\nhermes: aggregated %d changes on %s\n", <-songs, projectName)
+		case j.wait <- j.cmd.Wait():
+			close(j.closeWait)
 			return
-
-		// this case works perfectly
-		case <-j.interrupt:
-			j.closeWait <- true
-			kill(j.cmd.Process)
-			fmt.Printf("\n%s has received SIGINT\n", projectName)
-
-			newWG := sync.WaitGroup{}
-			newWG.Add(1)
-			// listen or die
-			go func() {
-				defer newWG.Done()
-				fmt.Printf("\nhermes waiting for changes on %s\n", projectName)
-				select {
-				// dequeue, quirk
-				case someChange := <-j.watch:
-					// enqueued
-					j.watch <- someChange
-				case <-j.interrupt:
-					fmt.Println("\nhermes has received SIGINT")
-					os.Exit(0)
-				}
-			}()
-			newWG.Wait()
-
-		// this case works perfectly.
-		case err := <-j.wait:
-			if err == nil {
-				fmt.Printf("hermes: %s %s was successful, exit code 0\n", projectName, execute)
-			} else {
-				if exitError, ok := err.(*exec.ExitError); ok {
-					code := exitError.ExitCode()
-					// program error: 1, shut by signal: -1
-					fmt.Printf("hermes: %s %s was unsuccessful, exit code %d\n", projectName, execute, code)
-				}
-			}
-
-			// watch for file changes or SIGINT
-			newWG := sync.WaitGroup{}
-			newWG.Add(1)
-			go func() {
-				defer newWG.Done()
-				fmt.Printf("\nhermes waiting for changes on %s\n", projectName)
-				select {
-				case someChange := <-j.watch:
-					j.watch <- someChange
-				case <-j.interrupt:
-					fmt.Println("\nhermes has received SIGINT")
-					os.Exit(0)
-				}
-
-			}()
-			newWG.Wait()
+		case <-j.closeWait:
+			close(j.wait)
+			return
 		}
 	}()
-	wg.Wait()
+
+	// waits for program execute
+	// watches for changes
+	// listens for a SIGINT
+	select {
+	// This case has a BUG
+	case <-j.watch:
+		newWG := sync.WaitGroup{}
+		newWG.Add(1)
+		// playLyre while waiting for all changes to be aggregated,
+		// write number of changes recorded to songs 😷
+
+		defer newWG.Done()
+		playLyre(3*time.Second, songs)
+		select {
+		case <-j.interrupt:
+			fmt.Println("\nhermes has received SIGINT")
+			os.Exit(0)
+		// dequeue, enqueue
+		case changes := <-songs:
+			songs <- changes
+		}
+		fmt.Printf("\nhermes: %d changes on %s\n", <-songs, projectName)
+
+	// this case works perfectly
+	case <-j.interrupt:
+		j.closeWait <- true
+		kill(j.cmd.Process)
+		fmt.Printf("\n%s has received SIGINT\n", projectName)
+
+		fmt.Printf("\nhermes waiting for changes on %s\n", projectName)
+		select {
+		// dequeue, quirk
+		case someChange := <-j.watch:
+			// enqueued
+			j.watch <- someChange
+		case <-j.interrupt:
+			fmt.Println("\nhermes has received SIGINT")
+			os.Exit(0)
+		}
+
+	// this case works perfectly.
+	case err := <-j.wait:
+		if err == nil {
+			fmt.Printf("hermes: %s %s was successful, exit code 0\n", projectName, execute)
+		} else {
+			if exitError, ok := err.(*exec.ExitError); ok {
+				code := exitError.ExitCode()
+				// program error: 1, shut by signal: -1
+				fmt.Printf("hermes: %s %s was unsuccessful, exit code %d\n", projectName, execute, code)
+			}
+		}
+
+		// watch for file changes or SIGINT
+		fmt.Printf("\nhermes waiting for changes on %s\n", projectName)
+		select {
+		case someChange := <-j.watch:
+			j.watch <- someChange
+		case <-j.interrupt:
+			fmt.Println("\nhermes has received SIGINT")
+			os.Exit(0)
+		}
+
+	}
+
 	log.Printf("\n\nhermes: re%s %s ...\n", executing, projectName)
 }
 
@@ -310,6 +284,7 @@ func message(projectDir string, name string, arg ...string) *exec.Cmd {
 	return cmd
 }
 
+// todo
 // playLyre aggregates changes with a time difference of
 // _ seconds and identifies them as a single change
 func playLyre(s time.Duration, songs chan int) {
