@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/rjeczalik/notify"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -101,15 +102,17 @@ func main() {
 // carryMessage handles the child process execution, termination and re-execution as needed
 // by directory changes made and SIGINT
 func (j *journey) carryMessage(execute string) {
-	// this looks dumb ikr 😆
 	var executing string
 
 	subs := strings.SplitN(*projectDir, "/", -1)
 	projectName := subs[len(subs)-1]
+
 	errLogger(notify.Watch(*projectDir, j.watch, notify.All))
 	signal.Notify(j.interrupt, os.Interrupt)
 	for {
 		var cmd *exec.Cmd
+
+		// this looks dumb ikr 😆
 		switch execute {
 		case "run":
 			executing = "running"
@@ -132,7 +135,6 @@ func (j *journey) carryMessage(execute string) {
 		case <-j.watch:
 			kill(cmd.Process)
 			fmt.Printf("\n%s: %v", projectName, <-j.wait)
-			fmt.Println("\naggregating changes...")
 			// playLyre while waiting for all changes to be aggregated,
 			// write number of changes to changesSum
 			go playLyre(j.watch, changesSum, true)
@@ -183,21 +185,20 @@ func (j *journey) carryMessage(execute string) {
 		}
 		log.Printf("\n\nhermes: re%s %s ...\n", executing, projectName)
 	}
-
+	http.ListenAndServe()
 }
 
 // kill terminates the program by sending SIGKILL and releasing resources
 // associated with the initial execution
 func kill(proc *os.Process) {
-	/*	err := proc.Kill()
-		if err != nil {
-			_, _ = fmt.Fprintf(os.Stdout, err.Error())
-		}
-		err = proc.Release()
-		if err != nil {
-			_, _ = fmt.Fprintf(os.Stdout, err.Error())
-		}*/
-	_ = proc.Signal(os.Interrupt)
+	err := proc.Kill()
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stdout, err.Error())
+	}
+	err = proc.Release()
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stdout, err.Error())
+	}
 
 }
 
@@ -270,6 +271,7 @@ func playLyre(player chan notify.EventInfo, songs chan int, initial bool) {
 		} else {
 			timer = time.NewTimer(time.Duration(*toWait) * time.Second)
 		}
+		fmt.Printf("\nhermes aggregating changes\n")
 		for {
 			select {
 			case <-timer.C:
