@@ -20,6 +20,9 @@ var (
 	// mainPath provides the path to the .go main file
 	mainPath = flag.String("main", "",
 		"it points to the main.go file from where the program is run")
+	// time in seconds to wait for next change before re-execution of command
+	toWait = flag.Int("wait", 10,
+		"time in seconds to wait for next change before re-execution of command")
 )
 
 // journey wraps the necessary channels and command to be used
@@ -47,6 +50,7 @@ func main() {
 	// gobuild does a 'go build'
 	gobuild := flag.Bool("gobuild", false,
 		"if true does a 'go build' for every change made")
+
 	flag.Parse()
 
 	if *projectDir == "" {
@@ -156,8 +160,9 @@ func (j *journey) carryMessage(execute string) {
 	select {
 	// This case has a BUG
 	case <-j.watch:
-		go playLyre(15*time.Second,j.watch ,songs)
+		go playLyre(j.watch, songs, true)
 		j.closeWait <- true
+		kill(j.cmd.Process)
 		// playLyre while waiting for all changes to be aggregated,
 		// write number of changes recorded to songs 😷
 		select {
@@ -174,17 +179,16 @@ func (j *journey) carryMessage(execute string) {
 		j.closeWait <- true
 		kill(j.cmd.Process)
 		fmt.Printf("\n%s has received SIGINT\n", projectName)
-
 		fmt.Printf("\nhermes waiting for changes on %s\n", projectName)
+		// aggregate changes if any
+		go playLyre(j.watch, songs, false)
 		select {
-		case someChange := <-j.watch:
-			j.watch <- someChange
-		// cleans up both parent and child processes
+		case changes := <-songs:
+			fmt.Printf("\nhermes: %d change(s) on %s\n", changes, projectName)
 		case <-j.interrupt:
 			fmt.Println("\nhermes has received SIGINT")
 			os.Exit(0)
 		}
-
 	// this case works perfectly.
 	case err := <-j.wait:
 		if err == nil {
@@ -277,7 +281,7 @@ func message(projectDir string, name string, arg ...string) *exec.Cmd {
 
 // playLyre aggregates changes with a time difference of s
 // it then writes the number of changes to songs
-func playLyre(s time.Duration, player chan notify.EventInfo,songs chan int) {
+func playLyre(player chan notify.EventInfo, songs chan int, initial bool) {
 	done := make(chan bool)
 	reset := make(chan bool)
 	// initial change before playLyre was called
@@ -288,14 +292,20 @@ func playLyre(s time.Duration, player chan notify.EventInfo,songs chan int) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		timer := time.NewTimer(s)
+		var timer *time.Timer
+		if !initial {
+			<-player
+			timer = time.NewTimer(time.Duration(*toWait) * time.Second)
+		} else {
+			timer = time.NewTimer(time.Duration(*toWait) * time.Second)
+		}
 		for {
 			select {
 			case <-timer.C:
 				done <- true
 				return
 			case <-reset:
-				timer.Reset(s)
+				timer.Reset(time.Duration(*toWait) * time.Second)
 			}
 		}
 	}()
