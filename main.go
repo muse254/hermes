@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/rjeczalik/notify"
 	"log"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -185,7 +184,6 @@ func (j *journey) carryMessage(execute string) {
 		}
 		log.Printf("\n\nhermes: re%s %s ...\n", executing, projectName)
 	}
-	http.ListenAndServe()
 }
 
 // kill terminates the program by sending SIGKILL and releasing resources
