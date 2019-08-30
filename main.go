@@ -133,8 +133,6 @@ func (j *journey) carryMessage(execute string) {
 	subs := strings.SplitN(*projectDir, "/", -1)
 	projectName := subs[len(subs)-1]
 
-	songs := make(chan int, 1)
-
 	// a bit quirky 😞
 	signal.Notify(j.interrupt, os.Interrupt)
 	errLogger(notify.Watch(*projectDir, j.watch, notify.All))
@@ -142,7 +140,6 @@ func (j *journey) carryMessage(execute string) {
 	fmt.Printf("hermes: %s %s ...\n", executing, projectName)
 	errLogger(j.cmd.Start())
 
-	// BUG. Goroutine returns.
 	// goroutine waits for process to complete or for wait chan to be closed
 	go func() {
 		select {
@@ -155,27 +152,22 @@ func (j *journey) carryMessage(execute string) {
 		}
 	}()
 
-	// waits for program execute
-	// watches for changes
-	// listens for a SIGINT
+	songs := make(chan int, 1)
 	select {
 	// This case has a BUG
 	case <-j.watch:
-		newWG := sync.WaitGroup{}
-		newWG.Add(1)
+		go playLyre(15*time.Second,j.watch ,songs)
+		j.closeWait <- true
 		// playLyre while waiting for all changes to be aggregated,
 		// write number of changes recorded to songs 😷
-
-		defer newWG.Done()
-		playLyre(3*time.Second, songs)
 		select {
+		// cleans up both parent and child processes
 		case <-j.interrupt:
 			fmt.Println("\nhermes has received SIGINT")
 			os.Exit(0)
 		case changes := <-songs:
-			fmt.Printf("\nhermes: %d changes on %s\n", changes, projectName)
+			fmt.Printf("\nhermes: %d change(s) on %s\n", changes, projectName)
 		}
-
 
 	// this case works perfectly
 	case <-j.interrupt:
@@ -185,10 +177,9 @@ func (j *journey) carryMessage(execute string) {
 
 		fmt.Printf("\nhermes waiting for changes on %s\n", projectName)
 		select {
-		// dequeue, quirk
 		case someChange := <-j.watch:
-			// enqueued
 			j.watch <- someChange
+		// cleans up both parent and child processes
 		case <-j.interrupt:
 			fmt.Println("\nhermes has received SIGINT")
 			os.Exit(0)
@@ -247,6 +238,7 @@ func wingedSandals(path string) (mainFile string, err error) {
 		return "", nil
 	}
 
+	// For most cases this should work
 	for _, file := range files {
 		if file == "main.go" {
 			return path + "/" + file, nil
@@ -283,42 +275,47 @@ func message(projectDir string, name string, arg ...string) *exec.Cmd {
 	return cmd
 }
 
-// todo
-// playLyre aggregates changes with a time difference of
-// _ seconds and identifies them as a single change
-func playLyre(s time.Duration, songs chan int) {
+// playLyre aggregates changes with a time difference of s
+// it then writes the number of changes to songs
+func playLyre(s time.Duration, player chan notify.EventInfo,songs chan int) {
+	done := make(chan bool)
+	reset := make(chan bool)
+	// initial change before playLyre was called
+	count := 1
 
-	group := sync.WaitGroup{}
-
-	done := make(chan bool, 1)
-	song := make(chan notify.EventInfo, 1)
-	var count int
-
-	errLogger(notify.Watch(*projectDir, song, notify.All))
-
-	// setting the timeout
-	group.Add(1)
+	wg := sync.WaitGroup{}
+	// setting the timer
+	wg.Add(1)
 	go func() {
-		defer group.Done()
+		defer wg.Done()
 		timer := time.NewTimer(s)
-		<-timer.C
-		done <- true
-	}()
-
-	// goroutine waiting for changes & timeout
-	group.Add(1)
-	go func() {
-		defer group.Done()
-		select {
-		case <-song:
-			count++
-		case <-done:
-			close(song)
-			return
+		for {
+			select {
+			case <-timer.C:
+				done <- true
+				return
+			case <-reset:
+				timer.Reset(s)
+			}
 		}
 	}()
 
-	group.Wait()
+	// goroutine waiting for changes & timeout
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-done:
+				return
+			case <-player:
+				count++
+				reset <- true
+			}
+		}
+	}()
+
+	wg.Wait()
 	songs <- count
 }
 
