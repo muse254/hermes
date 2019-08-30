@@ -17,6 +17,7 @@ It relies on "github.com/rjeczalik/notify" repo ❤ to watch for file changes.
 hermes being a commandline program uses flags:
     
     -project: to provide the project directory  (string flag)
+    -wait: to provide the time in seconds to wait for next change, default is 5s (int flag)
     
     For execution flags which are bool flags only one can be used:    
     -gorun: to state you want a 'go run' execution  
