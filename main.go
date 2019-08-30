@@ -77,46 +77,44 @@ func main() {
 		*gorun = true
 	}
 
-	for {
-		// created in each iteration. To optimize later?
-		watch := make(chan notify.EventInfo, 1)
-		interrupt := make(chan os.Signal, 1)
-		wait := make(chan error, 1)
-		closeWait := make(chan bool, 1)
+	watch := make(chan notify.EventInfo, 1)
+	interrupt := make(chan os.Signal, 1)
+	wait := make(chan error, 1)
+	closeWait := make(chan bool, 1)
 
-		if *gorun {
-			hermes := &journey{
-				message(*projectDir, "go", "run", *mainPath),
-				interrupt,
-				watch,
-				wait,
-				closeWait,
-			}
-			hermes.carryMessage("run")
-
-			// I have not got to the point of fully implementing or testing
-			// gotest or gobuild. todo after getting done with gorun
-		} else if *gotest {
-			hermes := &journey{
-				message(*projectDir, "go", "test"),
-				interrupt,
-				watch,
-				wait,
-				closeWait,
-			}
-			hermes.carryMessage("test")
-
-		} else if *gobuild {
-			hermes := &journey{
-				message(*projectDir, "go", "build"),
-				interrupt,
-				watch,
-				wait,
-				closeWait,
-			}
-			hermes.carryMessage("build")
+	if *gorun {
+		hermes := &journey{
+			message(*projectDir, "go", "run", *mainPath),
+			interrupt,
+			watch,
+			wait,
+			closeWait,
 		}
+		hermes.carryMessage("run")
+
+		// I have not got to the point of fully implementing or testing
+		// gotest or gobuild. todo after getting done with gorun
+	} else if *gotest {
+		hermes := &journey{
+			message(*projectDir, "go", "test"),
+			interrupt,
+			watch,
+			wait,
+			closeWait,
+		}
+		hermes.carryMessage("test")
+
+	} else if *gobuild {
+		hermes := &journey{
+			message(*projectDir, "go", "build"),
+			interrupt,
+			watch,
+			wait,
+			closeWait,
+		}
+		hermes.carryMessage("build")
 	}
+
 }
 
 // carryMessage handles the child process execution, termination and re-execution as needed
@@ -137,86 +135,88 @@ func (j *journey) carryMessage(execute string) {
 	subs := strings.SplitN(*projectDir, "/", -1)
 	projectName := subs[len(subs)-1]
 
-	// a bit quirky 😞
-	signal.Notify(j.interrupt, os.Interrupt)
-	errLogger(notify.Watch(*projectDir, j.watch, notify.All))
+	for {
+		signal.Notify(j.interrupt, os.Interrupt)
+		errLogger(notify.Watch(*projectDir, j.watch, notify.All))
 
-	fmt.Printf("hermes: %s %s ...\n", executing, projectName)
-	errLogger(j.cmd.Start())
+		fmt.Printf("hermes: %s %s ...\n", executing, projectName)
+		errLogger(j.cmd.Start())
 
-	// goroutine waits for process to complete or for wait chan to be closed
-	go func() {
-		select {
-		case j.wait <- j.cmd.Wait():
-			close(j.closeWait)
-			return
-		case <-j.closeWait:
-			close(j.wait)
-			return
-		}
-	}()
-
-	songs := make(chan int, 1)
-	select {
-	// This case has a BUG
-	case <-j.watch:
-		go playLyre(j.watch, songs, true)
-		j.closeWait <- true
-		kill(j.cmd.Process)
-		// playLyre while waiting for all changes to be aggregated,
-		// write number of changes recorded to songs 😷
-		select {
-		// cleans up both parent and child processes
-		case <-j.interrupt:
-			fmt.Println("\nhermes has received SIGINT")
-			os.Exit(0)
-		case changes := <-songs:
-			fmt.Printf("\nhermes: %d change(s) on %s\n", changes, projectName)
-		}
-
-	// this case works perfectly
-	case <-j.interrupt:
-		j.closeWait <- true
-		kill(j.cmd.Process)
-		fmt.Printf("\n%s has received SIGINT\n", projectName)
-		fmt.Printf("\nhermes waiting for changes on %s\n", projectName)
-		// aggregate changes if any
-		go playLyre(j.watch, songs, false)
-		select {
-		case changes := <-songs:
-			fmt.Printf("\nhermes: %d change(s) on %s\n", changes, projectName)
-		case <-j.interrupt:
-			fmt.Println("\nhermes has received SIGINT")
-			os.Exit(0)
-		}
-	// this case works perfectly.
-	case err := <-j.wait:
-		if err == nil {
-			fmt.Printf("hermes: %s %s was successful, exit code 0\n", projectName, execute)
-		} else {
-			if exitError, ok := err.(*exec.ExitError); ok {
-				code := exitError.ExitCode()
-				// program error: 1, shut by signal: -1
-				fmt.Printf("hermes: %s %s was unsuccessful, exit code %d\n", projectName, execute, code)
+		// goroutine waits for process to complete or for wait chan to be closed
+		go func() {
+			select {
+			case j.wait <- j.cmd.Wait():
+				return
+			case <-j.closeWait:
+				return
 			}
-		}
+		}()
 
-		// watch for file changes or SIGINT
-		fmt.Printf("\nhermes waiting for changes on %s\n", projectName)
+		songs := make(chan int, 1)
 		select {
-		case someChange := <-j.watch:
-			j.watch <- someChange
+		// This case has a BUG
+		case <-j.watch:
+			// playLyre while waiting for all changes to be aggregated,
+			// write number of changes recorded to songs 😷
+			go playLyre(j.watch, songs, true)
+			select {
+			// cleans up both parent and child processes
+			case <-j.interrupt:
+				j.closeWait <- true
+				kill(j.cmd.Process)
+				fmt.Println("\nhermes has received SIGINT")
+				os.Exit(0)
+			case changes := <-songs:
+				j.closeWait <- true
+				kill(j.cmd.Process)
+				fmt.Printf("\nhermes: %d change(s) on %s\n", changes, projectName)
+			}
+
+		// this case works perfectly
 		case <-j.interrupt:
-			fmt.Println("\nhermes has received SIGINT")
-			os.Exit(0)
+			j.closeWait <- true
+			kill(j.cmd.Process)
+			fmt.Printf("\n%s has received SIGINT\n", projectName)
+			fmt.Printf("\nhermes waiting for changes on %s\n", projectName)
+			// aggregate changes if any
+			go playLyre(j.watch, songs, false)
+			select {
+			case changes := <-songs:
+				fmt.Printf("\nhermes: %d change(s) on %s\n", changes, projectName)
+			case <-j.interrupt:
+				fmt.Println("\nhermes has received SIGINT")
+				os.Exit(0)
+			}
+		// this case works perfectly.
+		case err := <-j.wait:
+			if err == nil {
+				fmt.Printf("hermes: %s %s was successful, exit code 0\n", projectName, execute)
+			} else {
+				if exitError, ok := err.(*exec.ExitError); ok {
+					code := exitError.ExitCode()
+					// program error: 1, shut by signal: -1
+					fmt.Printf("hermes: %s %s was unsuccessful, exit code %d\n", projectName, execute, code)
+				}
+			}
+
+			// watch for file changes or SIGINT
+			fmt.Printf("\nhermes waiting for changes on %s\n", projectName)
+			select {
+			case someChange := <-j.watch:
+				j.watch <- someChange
+			case <-j.interrupt:
+				fmt.Println("\nhermes has received SIGINT")
+				os.Exit(0)
+			}
+
 		}
 
+		log.Printf("\n\nhermes: re%s %s ...\n", executing, projectName)
 	}
 
-	log.Printf("\n\nhermes: re%s %s ...\n", executing, projectName)
 }
 
-// todo
+// todo: bug?!
 // kill terminates the program by sending a SIGKILL
 func kill(proc *os.Process) {
 	err := proc.Kill()
