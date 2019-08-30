@@ -21,23 +21,22 @@ var (
 	mainPath = flag.String("main", "",
 		"it points to the main.go file from where the program is run")
 	// time in seconds to wait for next change before re-execution of command
-	toWait = flag.Int("wait", 10,
+	toWait = flag.Int("wait", 5,
 		"time in seconds to wait for next change before re-execution of command")
 )
 
-// journey wraps the necessary channels and command to be used
+// journey wraps the necessary channels to be used
 // during the project's execution lifetime on a hermes instance
 type journey struct {
-	cmd       *exec.Cmd
 	interrupt chan os.Signal
 	watch     chan notify.EventInfo
 	wait      chan error
-	closeWait chan bool
+	killWait  chan bool
 }
 
 func main() {
 	// help is the help message on usage of hermes
-	var help = "USAGE: ./hermes -project=ProjectDirectory -gorun\n" +
+	var help = "USAGE: ./hermes -project=path/to/some/projectFolder -gorun\n" +
 		"Hermes reruns or rebuilds or retests your project every time a saved change is made\n" +
 		"in your project directory\n"
 
@@ -80,38 +79,20 @@ func main() {
 	watch := make(chan notify.EventInfo, 1)
 	interrupt := make(chan os.Signal, 1)
 	wait := make(chan error, 1)
-	closeWait := make(chan bool, 1)
+	killWait := make(chan bool, 1)
+
+	hermes := &journey{
+		interrupt,
+		watch,
+		wait,
+		killWait,
+	}
 
 	if *gorun {
-		hermes := &journey{
-			message(*projectDir, "go", "run", *mainPath),
-			interrupt,
-			watch,
-			wait,
-			closeWait,
-		}
 		hermes.carryMessage("run")
-
-		// I have not got to the point of fully implementing or testing
-		// gotest or gobuild. todo after getting done with gorun
 	} else if *gotest {
-		hermes := &journey{
-			message(*projectDir, "go", "test"),
-			interrupt,
-			watch,
-			wait,
-			closeWait,
-		}
 		hermes.carryMessage("test")
-
 	} else if *gobuild {
-		hermes := &journey{
-			message(*projectDir, "go", "build"),
-			interrupt,
-			watch,
-			wait,
-			closeWait,
-		}
 		hermes.carryMessage("build")
 	}
 
@@ -120,77 +101,68 @@ func main() {
 // carryMessage handles the child process execution, termination and re-execution as needed
 // by directory changes made and SIGINT
 func (j *journey) carryMessage(execute string) {
-
 	// this looks dumb ikr 😆
 	var executing string
-	switch execute {
-	case "run":
-		executing = "running"
-	case "build":
-		executing = "building"
-	case "test":
-		executing = "testing"
-	}
 
 	subs := strings.SplitN(*projectDir, "/", -1)
 	projectName := subs[len(subs)-1]
-
+	errLogger(notify.Watch(*projectDir, j.watch, notify.All))
+	signal.Notify(j.interrupt, os.Interrupt)
 	for {
-		signal.Notify(j.interrupt, os.Interrupt)
-		errLogger(notify.Watch(*projectDir, j.watch, notify.All))
-
+		var cmd *exec.Cmd
+		switch execute {
+		case "run":
+			executing = "running"
+			cmd = message("go", "run", *mainPath)
+		case "build":
+			executing = "building"
+			cmd = message("go", "build")
+		case "test":
+			executing = "testing"
+			cmd = message("go", "test")
+		}
 		fmt.Printf("hermes: %s %s ...\n", executing, projectName)
-		errLogger(j.cmd.Start())
-
-		// goroutine waits for process to complete or for wait chan to be closed
 		go func() {
-			select {
-			case j.wait <- j.cmd.Wait():
-				return
-			case <-j.closeWait:
-				return
-			}
+			j.wait <- cmd.Run()
 		}()
 
-		songs := make(chan int, 1)
+		changesSum := make(chan int, 1)
 		select {
 		// This case has a BUG
 		case <-j.watch:
+			kill(cmd.Process)
+			fmt.Printf("\n%s: %v", projectName, <-j.wait)
+			fmt.Println("\naggregating changes...")
 			// playLyre while waiting for all changes to be aggregated,
-			// write number of changes recorded to songs 😷
-			go playLyre(j.watch, songs, true)
+			// write number of changes to changesSum
+			go playLyre(j.watch, changesSum, true)
 			select {
-			// cleans up both parent and child processes
 			case <-j.interrupt:
-				j.closeWait <- true
-				kill(j.cmd.Process)
 				fmt.Println("\nhermes has received SIGINT")
 				os.Exit(0)
-			case changes := <-songs:
-				j.closeWait <- true
-				kill(j.cmd.Process)
+			case changes := <-changesSum:
 				fmt.Printf("\nhermes: %d change(s) on %s\n", changes, projectName)
 			}
 
-		// this case works perfectly
+		// this case works
 		case <-j.interrupt:
-			j.closeWait <- true
-			kill(j.cmd.Process)
-			fmt.Printf("\n%s has received SIGINT\n", projectName)
+			kill(cmd.Process)
+			fmt.Printf("\n%s: %v", projectName, <-j.wait)
 			fmt.Printf("\nhermes waiting for changes on %s\n", projectName)
 			// aggregate changes if any
-			go playLyre(j.watch, songs, false)
+			go playLyre(j.watch, changesSum, false)
 			select {
-			case changes := <-songs:
+			case changes := <-changesSum:
 				fmt.Printf("\nhermes: %d change(s) on %s\n", changes, projectName)
 			case <-j.interrupt:
 				fmt.Println("\nhermes has received SIGINT")
 				os.Exit(0)
 			}
-		// this case works perfectly.
+
+		// this case works
 		case err := <-j.wait:
 			if err == nil {
-				fmt.Printf("hermes: %s %s was successful, exit code 0\n", projectName, execute)
+				fmt.Printf("hermes: %s %s was successful\n", projectName, execute)
 			} else {
 				if exitError, ok := err.(*exec.ExitError); ok {
 					code := exitError.ExitCode()
@@ -198,35 +170,35 @@ func (j *journey) carryMessage(execute string) {
 					fmt.Printf("hermes: %s %s was unsuccessful, exit code %d\n", projectName, execute, code)
 				}
 			}
-
-			// watch for file changes or SIGINT
+			// aggregate changes if any
+			go playLyre(j.watch, changesSum, false)
 			fmt.Printf("\nhermes waiting for changes on %s\n", projectName)
 			select {
-			case someChange := <-j.watch:
-				j.watch <- someChange
+			case changes := <-changesSum:
+				fmt.Printf("\nhermes: %d change(s) on %s\n", changes, projectName)
 			case <-j.interrupt:
 				fmt.Println("\nhermes has received SIGINT")
 				os.Exit(0)
 			}
-
 		}
-
 		log.Printf("\n\nhermes: re%s %s ...\n", executing, projectName)
 	}
 
 }
 
-// todo: bug?!
-// kill terminates the program by sending a SIGKILL
+// kill terminates the program by sending SIGKILL and releasing resources
+// associated with the initial execution
 func kill(proc *os.Process) {
-	err := proc.Kill()
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stdout, err.Error())
-	}
-	err = proc.Release()
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stdout, err.Error())
-	}
+	/*	err := proc.Kill()
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stdout, err.Error())
+		}
+		err = proc.Release()
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stdout, err.Error())
+		}*/
+	_ = proc.Signal(os.Interrupt)
+
 }
 
 // wingedSandals looks for main.go file in the directory given
@@ -269,14 +241,13 @@ func wingedSandals(path string) (mainFile string, err error) {
 }
 
 // message initialises the executable command
-func message(projectDir string, name string, arg ...string) *exec.Cmd {
-	cmd := exec.Command(name, arg...)
+func message(name string, arg ...string) (cmd *exec.Cmd) {
+	cmd = exec.Command(name, arg...)
 	cmd.Stdout = os.Stdout
 	cmd.Stdin = os.Stdin
-	cmd.Dir = projectDir
+	cmd.Dir = *projectDir
 	cmd.Stderr = os.Stderr
-
-	return cmd
+	return
 }
 
 // playLyre aggregates changes with a time difference of s
@@ -334,6 +305,3 @@ func errLogger(err error) {
 		log.Fatal(err)
 	}
 }
-
-// MAJOR BUG
-// making changes while running a process leaks the previous process's resources
