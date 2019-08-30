@@ -10,7 +10,7 @@ The program should help when using go's templating system in doing frontend work
 Or whatever else you may find it useful for.
 
 
-It relies on "github.com/rjeczalik/notify" repo.
+It relies on "github.com/rjeczalik/notify" repo ❤ to watch for file changes.
 
 ## Usage
 

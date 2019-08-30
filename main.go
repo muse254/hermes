@@ -172,11 +172,10 @@ func (j *journey) carryMessage(execute string) {
 		case <-j.interrupt:
 			fmt.Println("\nhermes has received SIGINT")
 			os.Exit(0)
-		// dequeue, enqueue
 		case changes := <-songs:
-			songs <- changes
+			fmt.Printf("\nhermes: %d changes on %s\n", changes, projectName)
 		}
-		fmt.Printf("\nhermes: %d changes on %s\n", <-songs, projectName)
+
 
 	// this case works perfectly
 	case <-j.interrupt:
