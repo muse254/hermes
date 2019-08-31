@@ -110,8 +110,8 @@ func (j *journey) carryMessage(execute string) {
 	signal.Notify(j.interrupt, os.Interrupt)
 	for {
 		var cmd *exec.Cmd
-
-		// this looks dumb ikr 😆
+		// reinitialising the cmd in every iteration provides a new Pid?
+		// after cmd.Release() *os.Process is unusable
 		switch execute {
 		case "run":
 			executing = "running"
@@ -130,10 +130,9 @@ func (j *journey) carryMessage(execute string) {
 
 		changesSum := make(chan int, 1)
 		select {
-		// This case has a BUG
+		// This case has a BUG. 😢
+		// resources bound to the process are not released
 		case <-j.watch:
-			kill(cmd.Process)
-			fmt.Printf("\n%s: %v", projectName, <-j.wait)
 			// playLyre while waiting for all changes to be aggregated,
 			// write number of changes to changesSum
 			go playLyre(j.watch, changesSum, true)
@@ -143,12 +142,20 @@ func (j *journey) carryMessage(execute string) {
 				os.Exit(0)
 			case changes := <-changesSum:
 				fmt.Printf("\nhermes: %d change(s) on %s\n", changes, projectName)
+				kill(cmd.Process)
+				err := <-j.wait
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					fmt.Printf("\n%s: exit code %d\n\n", projectName, exitErr.ExitCode())
+				}
 			}
 
-		// this case works
+		// this case works, resources are released
 		case <-j.interrupt:
 			kill(cmd.Process)
-			fmt.Printf("\n%s: %v", projectName, <-j.wait)
+			err := <-j.wait
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				fmt.Printf("\n%s: exit code %d", projectName, exitErr.ExitCode())
+			}
 			fmt.Printf("\nhermes waiting for changes on %s\n", projectName)
 			// aggregate changes if any
 			go playLyre(j.watch, changesSum, false)
@@ -160,7 +167,7 @@ func (j *journey) carryMessage(execute string) {
 				os.Exit(0)
 			}
 
-		// this case works
+		// this case works, resources are released
 		case err := <-j.wait:
 			if err == nil {
 				fmt.Printf("hermes: %s %s was successful\n", projectName, execute)
@@ -182,7 +189,6 @@ func (j *journey) carryMessage(execute string) {
 				os.Exit(0)
 			}
 		}
-		log.Printf("\n\nhermes: re%s %s ...\n", executing, projectName)
 	}
 }
 
@@ -197,7 +203,6 @@ func kill(proc *os.Process) {
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stdout, err.Error())
 	}
-
 }
 
 // wingedSandals looks for main.go file in the directory given
@@ -295,7 +300,6 @@ func playLyre(player chan notify.EventInfo, songs chan int, initial bool) {
 			}
 		}
 	}()
-
 	wg.Wait()
 	songs <- count
 }
