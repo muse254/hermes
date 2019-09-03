@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -110,12 +111,18 @@ func (j *journey) carryMessage(execute string) {
 	signal.Notify(j.interrupt, os.Interrupt)
 	for {
 		var cmd *exec.Cmd
-		// reinitialising the cmd in every iteration provides a new Pid?
-		// after cmd.Release() *os.Process is unusable
 		switch execute {
 		case "run":
 			executing = "running"
-			cmd = message("go", "run", *mainPath)
+			// go build && ./projectName works
+			build := message("go", "build")
+			err := build.Run()
+			errLogger(err)
+			if runtime.GOOS == "windows" {
+				cmd = message(projectName)
+			} else {
+				cmd = message("./" + projectName)
+			}
 		case "build":
 			executing = "building"
 			cmd = message("go", "build")
@@ -130,8 +137,7 @@ func (j *journey) carryMessage(execute string) {
 
 		changesSum := make(chan int, 1)
 		select {
-		// This case has a BUG. 😢
-		// resources bound to the process are not released
+
 		case <-j.watch:
 			// playLyre while waiting for all changes to be aggregated,
 			// write number of changes to changesSum
@@ -149,7 +155,6 @@ func (j *journey) carryMessage(execute string) {
 				}
 			}
 
-		// this case works, resources are released
 		case <-j.interrupt:
 			kill(cmd.Process)
 			err := <-j.wait
@@ -167,7 +172,6 @@ func (j *journey) carryMessage(execute string) {
 				os.Exit(0)
 			}
 
-		// this case works, resources are released
 		case err := <-j.wait:
 			if err == nil {
 				fmt.Printf("hermes: %s %s was successful\n", projectName, execute)
