@@ -24,6 +24,9 @@ var (
 	// time in seconds to wait for next change before re-execution of command
 	toWait = flag.Int("wait", 5,
 		"time in seconds to wait for next change before re-execution of command")
+
+	wrap = flag.Bool("wrap", false,
+		"it assumes the current parent directory as the project's directory")
 )
 
 // journey wraps the necessary channels to be used
@@ -53,7 +56,11 @@ func main() {
 
 	flag.Parse()
 
-	if *projectDir == "" {
+	if *projectDir == "" && *wrap == true {
+		dir, err := os.Getwd()
+		errLogger(err)
+		*projectDir = dir
+	} else if *projectDir == "" {
 		_, _ = fmt.Fprintf(os.Stderr, help)
 		flag.PrintDefaults()
 		return
