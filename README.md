@@ -26,6 +26,8 @@ hermes being a commandline program uses flags:
     
     For some reason if your func main is in another file other than main.go:
     -main: to state where the path to the .go file that contains main  (string flag)
+    
+    While Hermes is running, pressing Enter key to signal finish of stdin causes RE-EXECUTION of the progeam
 
 Note that this error:
 

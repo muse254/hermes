@@ -150,7 +150,7 @@ func (j *journey) carryMessage(execute string) {
 		select {
 		case <-stdin:
 			// cleanup
-			fmt.Println("stdin RE-EXECUTION")
+			fmt.Println("stdin: RE-EXECUTION")
 			kill(cmd.Process)
 			err := <-j.wait
 			if exitErr, ok := err.(*exec.ExitError); ok {
@@ -185,8 +185,7 @@ func (j *journey) carryMessage(execute string) {
 			go playLyre(j.watch, changesSum, false)
 			select {
 			case <-stdin:
-				fmt.Println("stdin RE-EXECUTION")
-				fmt.Println("stdin RE-EXECUTION")
+				fmt.Println("stdin: RE-EXECUTION")
 			case changes := <-changesSum:
 				fmt.Printf("\nhermes: %d change(s) on %s\n", changes, projectName)
 			case <-j.interrupt:
@@ -209,7 +208,7 @@ func (j *journey) carryMessage(execute string) {
 			fmt.Printf("\nhermes waiting for changes on %s\n", projectName)
 			select {
 			case <-stdin:
-				fmt.Println("stdin RE-EXECUTION")
+				fmt.Println("stdin: RE-EXECUTION")
 			case changes := <-changesSum:
 				fmt.Printf("\nhermes: %d change(s) on %s\n", changes, projectName)
 			case <-j.interrupt:
