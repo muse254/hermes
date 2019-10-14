@@ -20,8 +20,8 @@ hermes being a commandline program uses flags:
     -wait: to provide the time in seconds to wait for next change, default is 5s (int flag)
     
     For execution flags which are bool flags only one can be used:    
-    -gorun: to state you want a 'go run' execution  
-    -gobuild: to state that you want a 'go build && ./projectName' execution
+    -gorun: to state you want a 'go build && ./projectName' execution  
+    -gobuild: to state that you want a 'go build' execution
     -gotest: to state you want a 'go test' execution
     
     For some reason if your func main is in another file other than main.go:
