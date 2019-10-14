@@ -111,7 +111,7 @@ func (j *journey) carryMessage(execute string) {
 	signal.Notify(j.interrupt, os.Interrupt)
 	for {
 		/*
-		Pressing Enter key means that Hermes does a re-execution of the program
+			Pressing Enter key means that Hermes does a re-execution of the program
 		*/
 		var cmd *exec.Cmd
 		switch execute {
@@ -140,7 +140,7 @@ func (j *journey) carryMessage(execute string) {
 
 		stdin := make(chan int)
 		go func() {
-			buff := make([]byte,2)
+			buff := make([]byte, 2)
 			sth, _ := os.Stdin.Read(buff)
 			stdin <- sth
 
@@ -148,8 +148,15 @@ func (j *journey) carryMessage(execute string) {
 
 		changesSum := make(chan int, 1)
 		select {
-		case <- stdin:
-			break
+		case <-stdin:
+			// cleanup
+			fmt.Println("stdin RE-EXECUTION")
+			kill(cmd.Process)
+			err := <-j.wait
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				fmt.Printf("\n%s: exit code %d\n", projectName, exitErr.ExitCode())
+			}
+
 		case <-j.watch:
 			// playLyre while waiting for all changes to be aggregated,
 			// write number of changes to changesSum
@@ -177,6 +184,9 @@ func (j *journey) carryMessage(execute string) {
 			// aggregate changes if any
 			go playLyre(j.watch, changesSum, false)
 			select {
+			case <-stdin:
+				fmt.Println("stdin RE-EXECUTION")
+				fmt.Println("stdin RE-EXECUTION")
 			case changes := <-changesSum:
 				fmt.Printf("\nhermes: %d change(s) on %s\n", changes, projectName)
 			case <-j.interrupt:
@@ -198,6 +208,8 @@ func (j *journey) carryMessage(execute string) {
 			go playLyre(j.watch, changesSum, false)
 			fmt.Printf("\nhermes waiting for changes on %s\n", projectName)
 			select {
+			case <-stdin:
+				fmt.Println("stdin RE-EXECUTION")
 			case changes := <-changesSum:
 				fmt.Printf("\nhermes: %d change(s) on %s\n", changes, projectName)
 			case <-j.interrupt:
