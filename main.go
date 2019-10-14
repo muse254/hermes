@@ -110,6 +110,9 @@ func (j *journey) carryMessage(execute string) {
 	errLogger(notify.Watch(*projectDir, j.watch, notify.All))
 	signal.Notify(j.interrupt, os.Interrupt)
 	for {
+		/*
+		Pressing Enter key means that Hermes does a re-execution of the program
+		*/
 		var cmd *exec.Cmd
 		switch execute {
 		case "run":
@@ -135,9 +138,18 @@ func (j *journey) carryMessage(execute string) {
 			j.wait <- cmd.Run()
 		}()
 
+		stdin := make(chan int)
+		go func() {
+			buff := make([]byte,2)
+			sth, _ := os.Stdin.Read(buff)
+			stdin <- sth
+
+		}()
+
 		changesSum := make(chan int, 1)
 		select {
-
+		case <- stdin:
+			break
 		case <-j.watch:
 			// playLyre while waiting for all changes to be aggregated,
 			// write number of changes to changesSum
