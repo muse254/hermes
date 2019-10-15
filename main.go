@@ -25,7 +25,7 @@ var (
 	toWait = flag.Int("wait", 5,
 		"time in seconds to wait for next change before re-execution of command")
 
-	wrap = flag.Bool("wrap", false,
+	wd = flag.Bool("wd", false,
 		"it assumes the current parent directory as the project's directory")
 )
 
@@ -56,7 +56,7 @@ func main() {
 
 	flag.Parse()
 
-	if *projectDir == "" && *wrap == true {
+	if *projectDir == "" && *wd == true {
 		dir, err := os.Getwd()
 		errLogger(err)
 		*projectDir = dir
@@ -336,6 +336,30 @@ func playLyre(player chan notify.EventInfo, songs chan int, initial bool) {
 	}()
 	wg.Wait()
 	songs <- count
+}
+
+// updateExe takes in the "projects" path, looks for projects that have hermes executable
+// in the even of a new build, the executable in the projects are updated
+func updateExe(projectsPath string) error  {
+	projectsFolder, err := os.Open(projectsPath)
+	errLogger(err)
+
+	projects, err := projectsFolder.Readdirnames(0)
+	errLogger(err)
+
+	for _, project := range projects{
+		project = projectsPath + "/" + project
+		projectFolder, err := os.Open(project)
+		errLogger(err)
+
+		files, err := projectFolder.Readdirnames(0)
+		for _, file := range files{
+			if file == "hermes"{
+
+			}
+		}
+	}
+	return nil
 }
 
 func errLogger(err error) {

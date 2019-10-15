@@ -24,7 +24,7 @@ hermes being a commandline program uses flags:
     -gobuild: to state that you want a 'go build' execution
     -gotest: to state you want a 'go test' execution
     
-    -wrap: to tell hermes that its executable is on the project directory making flag -project absolete
+    -wd: to tell hermes that its executable is on the project directory making flag -project absolete
     
     For some reason if your func main is in another file other than main.go:
     -main: to state where the path to the .go file that contains main  (string flag)
