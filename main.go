@@ -24,9 +24,9 @@ var (
 	// time in seconds to wait for next change before re-execution of command
 	toWait = flag.Int("wait", 5,
 		"time in seconds to wait for next change before re-execution of command")
-
+	// wrap tells hermes that its working directory is the target project's directory
 	wrap = flag.Bool("wrap", false,
-		"it assumes the current parent directory as the project's directory")
+		"it assumes the working directory as the target project's directory")
 )
 
 // journey wraps the necessary channels to be used
@@ -46,7 +46,7 @@ func main() {
 
 	// gorun does 'go run'
 	gorun := flag.Bool("gorun", false,
-		"if true it does a 'go run _.go' for every change made")
+		"if true it does a 'go build' && './project' for every change made.These are two decoupled processes")
 	// gotest does a 'go test'
 	gotest := flag.Bool("gotest", false,
 		"if true it does a 'go test' for every change made")
@@ -124,7 +124,6 @@ func (j *journey) carryMessage(execute string) {
 		switch execute {
 		case "run":
 			executing = "running"
-			// go build && ./projectName works
 			build := message("go", "build")
 			err := build.Run()
 			errLogger(err)
@@ -147,16 +146,13 @@ func (j *journey) carryMessage(execute string) {
 
 		stdin := make(chan int)
 		go func() {
-			buff := make([]byte, 2)
-			sth, _ := os.Stdin.Read(buff)
+			sth, _ := os.Stdin.Read(make([]byte, 2))
 			stdin <- sth
-
 		}()
 
 		changesSum := make(chan int, 1)
 		select {
 		case <-stdin:
-			// cleanup
 			fmt.Println("stdin: RE-EXECUTION")
 			cleanProc(cmd.Process)
 			err := <-j.wait
