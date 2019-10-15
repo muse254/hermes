@@ -25,7 +25,7 @@ var (
 	toWait = flag.Int("wait", 5,
 		"time in seconds to wait for next change before re-execution of command")
 
-	wd = flag.Bool("wd", false,
+	wrap = flag.Bool("wrap", false,
 		"it assumes the current parent directory as the project's directory")
 )
 
@@ -56,7 +56,7 @@ func main() {
 
 	flag.Parse()
 
-	if *projectDir == "" && *wd == true {
+	if *projectDir == "" && *wrap == true {
 		dir, err := os.Getwd()
 		errLogger(err)
 		*projectDir = dir
@@ -158,7 +158,7 @@ func (j *journey) carryMessage(execute string) {
 		case <-stdin:
 			// cleanup
 			fmt.Println("stdin: RE-EXECUTION")
-			kill(cmd.Process)
+			cleanProc(cmd.Process)
 			err := <-j.wait
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				fmt.Printf("\n%s: exit code %d\n", projectName, exitErr.ExitCode())
@@ -172,17 +172,22 @@ func (j *journey) carryMessage(execute string) {
 			case <-stdin:
 				// when you don't want to wait for the say 5 seconds
 				fmt.Println("stdin: RE-EXECUTION")
-				kill(cmd.Process)
+				cleanProc(cmd.Process)
 				err := <-j.wait
 				if exitErr, ok := err.(*exec.ExitError); ok {
 					fmt.Printf("\n%s: exit code %d\n", projectName, exitErr.ExitCode())
 				}
 			case <-j.interrupt:
+				cleanProc(cmd.Process)
+				err := <-j.wait
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					fmt.Printf("\n%s: exit code %d\n\n", projectName, exitErr.ExitCode())
+				}
 				fmt.Println("\nhermes has received SIGINT")
 				os.Exit(0)
 			case changes := <-changesSum:
 				fmt.Printf("\nhermes: %d change(s) on %s\n", changes, projectName)
-				kill(cmd.Process)
+				cleanProc(cmd.Process)
 				err := <-j.wait
 				if exitErr, ok := err.(*exec.ExitError); ok {
 					fmt.Printf("\n%s: exit code %d\n\n", projectName, exitErr.ExitCode())
@@ -190,7 +195,7 @@ func (j *journey) carryMessage(execute string) {
 			}
 
 		case <-j.interrupt:
-			kill(cmd.Process)
+			cleanProc(cmd.Process)
 			err := <-j.wait
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				fmt.Printf("\n%s: exit code %d", projectName, exitErr.ExitCode())
@@ -234,9 +239,9 @@ func (j *journey) carryMessage(execute string) {
 	}
 }
 
-// kill terminates the program by sending SIGKILL and releasing resources
+// cleanProc terminates the program by sending SIGKILL and releasing resources
 // associated with the initial execution
-func kill(proc *os.Process) {
+func cleanProc(proc *os.Process) {
 	err := proc.Kill()
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stdout, err.Error())
@@ -346,30 +351,7 @@ func playLyre(player chan notify.EventInfo, songs chan int, initial bool) {
 	songs <- count
 }
 
-// updateExe takes in the "projects" path, looks for projects that have hermes executable
-// in the even of a new build, the executable in the projects are updated
-func updateExe(projectsPath string) error  {
-	projectsFolder, err := os.Open(projectsPath)
-	errLogger(err)
-
-	projects, err := projectsFolder.Readdirnames(0)
-	errLogger(err)
-
-	for _, project := range projects{
-		project = projectsPath + "/" + project
-		projectFolder, err := os.Open(project)
-		errLogger(err)
-
-		files, err := projectFolder.Readdirnames(0)
-		for _, file := range files{
-			if file == "hermes"{
-
-			}
-		}
-	}
-	return nil
-}
-
+// errLogger logs the error if any
 func errLogger(err error) {
 	if err != nil {
 		log.Fatal(err)
