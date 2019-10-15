@@ -169,6 +169,14 @@ func (j *journey) carryMessage(execute string) {
 			// write number of changes to changesSum
 			go playLyre(j.watch, changesSum, true)
 			select {
+			case <-stdin:
+				// when you don't want to wait for the say 5 seconds
+				fmt.Println("stdin: RE-EXECUTION")
+				kill(cmd.Process)
+				err := <-j.wait
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					fmt.Printf("\n%s: exit code %d\n", projectName, exitErr.ExitCode())
+				}
 			case <-j.interrupt:
 				fmt.Println("\nhermes has received SIGINT")
 				os.Exit(0)
