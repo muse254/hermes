@@ -158,7 +158,7 @@ func (j *journey) carryMessage(execute string) {
 		case <-stdin:
 			// cleanup
 			fmt.Println("stdin: RE-EXECUTION")
-			kill(cmd.Process)
+			cleanProc(cmd.Process)
 			err := <-j.wait
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				fmt.Printf("\n%s: exit code %d\n", projectName, exitErr.ExitCode())
@@ -169,12 +169,24 @@ func (j *journey) carryMessage(execute string) {
 			// write number of changes to changesSum
 			go playLyre(j.watch, changesSum, true)
 			select {
+			case <-stdin:
+				fmt.Println("stdin: RE-EXECUTION")
+				cleanProc(cmd.Process)
+				err := <-j.wait
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					fmt.Printf("\n%s: exit code %d\n", projectName, exitErr.ExitCode())
+				}
 			case <-j.interrupt:
 				fmt.Println("\nhermes has received SIGINT")
+				cleanProc(cmd.Process)
+				err := <-j.wait
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					fmt.Printf("\n%s: exit code %d\n\n", projectName, exitErr.ExitCode())
+				}
 				os.Exit(0)
 			case changes := <-changesSum:
 				fmt.Printf("\nhermes: %d change(s) on %s\n", changes, projectName)
-				kill(cmd.Process)
+				cleanProc(cmd.Process)
 				err := <-j.wait
 				if exitErr, ok := err.(*exec.ExitError); ok {
 					fmt.Printf("\n%s: exit code %d\n\n", projectName, exitErr.ExitCode())
@@ -182,7 +194,7 @@ func (j *journey) carryMessage(execute string) {
 			}
 
 		case <-j.interrupt:
-			kill(cmd.Process)
+			cleanProc(cmd.Process)
 			err := <-j.wait
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				fmt.Printf("\n%s: exit code %d", projectName, exitErr.ExitCode())
@@ -226,9 +238,9 @@ func (j *journey) carryMessage(execute string) {
 	}
 }
 
-// kill terminates the program by sending SIGKILL and releasing resources
+// cleanProc terminates the program by sending SIGKILL and releasing resources
 // associated with the initial execution
-func kill(proc *os.Process) {
+func cleanProc(proc *os.Process) {
 	err := proc.Kill()
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stdout, err.Error())
